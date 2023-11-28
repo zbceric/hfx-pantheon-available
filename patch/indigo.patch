@@ -1,0 +1,76 @@
+diff --git a/dagger/models.py b/dagger/models.py
+index 2ef8229..ff0cba3 100644
+--- a/dagger/models.py
++++ b/dagger/models.py
+@@ -46,11 +46,11 @@ class DaggerLSTM(object):
+         self.num_layers = 1
+         self.lstm_dim = 32
+         stacked_lstm = rnn.MultiRNNCell([rnn.BasicLSTMCell(self.lstm_dim)
+-            for _ in xrange(self.num_layers)])
++            for _ in range(self.num_layers)])
+ 
+         self.state_in = []
+         state_tuple_in = []
+-        for _ in xrange(self.num_layers):
++        for _ in range(self.num_layers):
+             c_in = tf.placeholder(tf.float32, [None, self.lstm_dim])
+             h_in = tf.placeholder(tf.float32, [None, self.lstm_dim])
+             self.state_in.append((c_in, h_in))
+@@ -81,7 +81,7 @@ class DaggerLSTM(object):
+ 
+     def zero_init_state(self, batch_size):
+         init_state = []
+-        for _ in xrange(self.num_layers):
++        for _ in range(self.num_layers):
+             c_init = np.zeros([batch_size, self.lstm_dim], np.float32)
+             h_init = np.zeros([batch_size, self.lstm_dim], np.float32)
+             init_state.append((c_init, h_init))
+diff --git a/env/receiver.py b/env/receiver.py
+index 0c59edf..0016ca0 100644
+--- a/env/receiver.py
++++ b/env/receiver.py
+@@ -63,7 +63,7 @@ class Receiver(object):
+         self.poller.modify(self.sock, READ_ERR_FLAGS)
+ 
+         while True:
+-            self.sock.sendto('Hello from receiver', self.peer_addr)
++            self.sock.sendto(b'Hello from receiver', self.peer_addr)
+             events = self.poller.poll(TIMEOUT)
+ 
+             if not events:  # timed out
+diff --git a/env/sender.py b/env/sender.py
+index 08c98ca..85290d3 100644
+--- a/env/sender.py
++++ b/env/sender.py
+@@ -18,7 +18,18 @@ import sys
+ import json
+ import socket
+ import select
++import os
+ from os import path
++
++current_path = os.path.dirname(os.path.abspath(__file__))
++# print(current_path)
++
++if current_path not in sys.path:
++    sys.path.append(current_path)
++
++# for path in sys.path:
++    # print(path)
++
+ import numpy as np
+ import datagram_pb2
+ import project_root
+diff --git a/helpers/helpers.py b/helpers/helpers.py
+index 976e217..4d03744 100644
+--- a/helpers/helpers.py
++++ b/helpers/helpers.py
+@@ -32,7 +32,7 @@ math_ops = {
+     '+': operator.add,
+     '-': operator.sub,
+     '*': operator.mul,
+-    '/': operator.div,
++    '/': operator.truediv,
+ }
+ 
+ 
