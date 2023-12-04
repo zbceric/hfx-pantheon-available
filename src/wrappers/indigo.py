@@ -6,6 +6,9 @@ from subprocess import check_call
 import arg_parser
 import context
 
+'''自定义的UDP算法 [似乎缺少 recovery 的策略]
+给出 Sender 和 Receiver 需要运行的指令
+'''
 
 def main():
     args = arg_parser.sender_first()

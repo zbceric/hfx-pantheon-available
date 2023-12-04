@@ -4,6 +4,10 @@ from subprocess import check_call
 
 import arg_parser
 
+'''内核支持的算法
+直接使用 iperf 打流, 并指定使用的算法即可
+例如 CUBIC/BBR/Vegas...
+'''
 
 def main():
     args = arg_parser.receiver_first()

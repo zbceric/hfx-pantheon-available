@@ -11,6 +11,8 @@ def load_kernel_module(module):
 def enable_congestion_control(cc):
     cc_list = check_output('sysctl net.ipv4.tcp_allowed_congestion_control',
                            shell=True)
+    cc_list = cc_list.decode('utf-8')
+    cc_list = cc_list.replace('\n', '')
     cc_list = cc_list.split('=')[-1].split()
 
     # return if cc is already in the allowed congestion control list
@@ -24,6 +26,7 @@ def enable_congestion_control(cc):
 
 def check_qdisc(qdisc):
     curr_qdisc = check_output('sysctl net.core.default_qdisc', shell=True)
+    curr_qdisc = curr_qdisc.decode('utf-8')
     curr_qdisc = curr_qdisc.split('=')[-1].strip()
 
     if qdisc != curr_qdisc:

@@ -1,0 +1,103 @@
+diff --git a/.vscode/launch.json b/.vscode/launch.json
+index 47473ab..3f8cbd8 100755
+--- a/.vscode/launch.json
++++ b/.vscode/launch.json
+@@ -9,7 +9,8 @@
+             "args": [
+                 "local",
+                 "--schemes",
+-                "cubic",
++                "bbr",
++                // "cubic",
+                 // "--uplink-trace",
+                 // "100mbps.trace",
+                 // "--append-mm-cmds",
+diff --git a/src/experiments/data/pantheon_metadata.json b/src/experiments/data/pantheon_metadata.json
+index 68b455b..def997b 100644
+--- a/src/experiments/data/pantheon_metadata.json
++++ b/src/experiments/data/pantheon_metadata.json
+@@ -1,16 +1,16 @@
+ {
+     "cc_schemes": [
+-        "cubic"
++        "bbr"
+     ],
+     "datapath": "",
+     "downlink_trace": "12mbps.trace",
+     "flows": 1,
+-    "git_summary": "branch: install @ 5b1f117aeece69377e0eb2f9b2156f904074a0b6\nthird_party/fillp @ d6da1459332fcee56963885d7eba17e6a32d4519\nthird_party/fillp-sheep @ 0e5bb722943babcd2b090d2c64fcd45e12e923f9\nthird_party/genericCC @ d0153f8e594aa89e93b032143cedbdfe58e562f4\nthird_party/indigo @ 463d89b09699a57bfdfbae351646df6a60040b90\n M dagger/models.py\n M env/receiver.py\n M env/sender.py\n M helpers/helpers.py\nthird_party/libutp @ b3465b942e2826f2b179eaab4a906ce6bb7cf3cf\nthird_party/pantheon-tunnel @ f866d3f58d27afd942717625ee3a354cc2e802bd\nthird_party/pcc @ 1afc958fa0d66d18b623c091a55fec872b4981e1\n M receiver/src/buffer.h\n M receiver/src/core.cpp\n M sender/src/buffer.h\n M sender/src/core.cpp\nthird_party/pcc-experimental @ cd43e34e3f5f5613e8acd08fab92c4eb24f974ab\nthird_party/proto-quic @ 77961f1a82733a86b42f1bc8143ebc978f3cff42\nthird_party/scream-reproduce @ f099118d1421aa3131bf11ff1964974e1da3bdb2\nthird_party/sprout @ 366e35c6178b01e31d4a46ad18c74f9415f19a26\nthird_party/verus @ d4b447ea74c6c60a261149af2629562939f9a494\n M src/verus.hpp\n M tools/plot.py\nthird_party/vivace @ 2baf86211435ae071a32f96b7d8c504587f5d7f4\nthird_party/webrtc @ 3f0cc2a9061a41b6f9dde4735770d143a1fa2851\n",
++    "git_summary": "branch: install @ 313b4aa9f14bd9c46aecf5ec568b1d25b4945b84\nthird_party/fillp @ d6da1459332fcee56963885d7eba17e6a32d4519\nthird_party/fillp-sheep @ 0e5bb722943babcd2b090d2c64fcd45e12e923f9\nthird_party/genericCC @ d0153f8e594aa89e93b032143cedbdfe58e562f4\nthird_party/indigo @ 463d89b09699a57bfdfbae351646df6a60040b90\n M dagger/dagger.py\n M dagger/experts.py\n M dagger/models.py\n M dagger/project_root.py\n M dagger/run_sender.py\n M dagger/train.py\n M dagger/worker.py\n M env/environment.py\n M env/receiver.py\n M env/sender.py\n M helpers/helpers.py\n M helpers/my_gce_helper.py\n M helpers/pkill.py\nthird_party/libutp @ b3465b942e2826f2b179eaab4a906ce6bb7cf3cf\nthird_party/pantheon-tunnel @ f866d3f58d27afd942717625ee3a354cc2e802bd\nthird_party/pcc @ 1afc958fa0d66d18b623c091a55fec872b4981e1\n M receiver/src/buffer.h\n M receiver/src/core.cpp\n M sender/src/buffer.h\n M sender/src/core.cpp\nthird_party/pcc-experimental @ cd43e34e3f5f5613e8acd08fab92c4eb24f974ab\nthird_party/proto-quic @ 77961f1a82733a86b42f1bc8143ebc978f3cff42\nthird_party/scream-reproduce @ f099118d1421aa3131bf11ff1964974e1da3bdb2\nthird_party/sprout @ 366e35c6178b01e31d4a46ad18c74f9415f19a26\nthird_party/verus @ d4b447ea74c6c60a261149af2629562939f9a494\n M src/verus.hpp\n M tools/plot.py\nthird_party/vivace @ 2baf86211435ae071a32f96b7d8c504587f5d7f4\nthird_party/webrtc @ 3f0cc2a9061a41b6f9dde4735770d143a1fa2851\n",
+     "interval": 0,
+     "mode": "local",
+     "random_order": false,
+     "run_times": 1,
+     "runtime": 30,
+     "start_run_id": 1,
+-    "uplink_trace": "100mbps.trace"
++    "uplink_trace": "12mbps.trace"
+ }
+\ No newline at end of file
+diff --git a/src/helpers/kernel_ctl.py b/src/helpers/kernel_ctl.py
+index fd5c74f..fda88ba 100755
+--- a/src/helpers/kernel_ctl.py
++++ b/src/helpers/kernel_ctl.py
+@@ -11,6 +11,8 @@ def load_kernel_module(module):
+ def enable_congestion_control(cc):
+     cc_list = check_output('sysctl net.ipv4.tcp_allowed_congestion_control',
+                            shell=True)
++    cc_list = cc_list.decode('utf-8')
++    cc_list = cc_list.replace('\n', '')
+     cc_list = cc_list.split('=')[-1].split()
+ 
+     # return if cc is already in the allowed congestion control list
+@@ -24,6 +26,7 @@ def enable_congestion_control(cc):
+ 
+ def check_qdisc(qdisc):
+     curr_qdisc = check_output('sysctl net.core.default_qdisc', shell=True)
++    curr_qdisc = curr_qdisc.decode('utf-8')
+     curr_qdisc = curr_qdisc.split('=')[-1].strip()
+ 
+     if qdisc != curr_qdisc:
+diff --git a/src/wrappers/bbr.py b/src/wrappers/bbr.py
+index 1792f4c..4feee7c 100755
+--- a/src/wrappers/bbr.py
++++ b/src/wrappers/bbr.py
+@@ -15,7 +15,8 @@ def setup_bbr():
+     kernel_ctl.enable_congestion_control('bbr')
+ 
+     # check if qdisc is fq
+-    kernel_ctl.check_qdisc('fq')
++    # kernel_ctl.check_qdisc('fq')
++    kernel_ctl.check_qdisc('fq_codel')          # Linux 4.x 使用的是 fq, Linux5.x 使用的是 fq_codel
+ 
+ 
+ def main():
+diff --git a/src/wrappers/cubic.py b/src/wrappers/cubic.py
+index 060974b..0548d05 100755
+--- a/src/wrappers/cubic.py
++++ b/src/wrappers/cubic.py
+@@ -4,6 +4,10 @@ from subprocess import check_call
+ 
+ import arg_parser
+ 
++'''内核支持的算法
++直接使用 iperf 打流, 并指定使用的算法即可
++例如 CUBIC/BBR/Vegas...
++'''
+ 
+ def main():
+     args = arg_parser.receiver_first()
+diff --git a/src/wrappers/indigo.py b/src/wrappers/indigo.py
+index fb16b10..1d01c14 100755
+--- a/src/wrappers/indigo.py
++++ b/src/wrappers/indigo.py
+@@ -6,6 +6,9 @@ from subprocess import check_call
+ import arg_parser
+ import context
+ 
++'''自定义的UDP算法 [似乎缺少 recovery 的策略]
++给出 Sender 和 Receiver 需要运行的指令
++'''
+ 
+ def main():
+     args = arg_parser.sender_first()

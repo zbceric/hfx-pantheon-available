@@ -15,7 +15,8 @@ def setup_bbr():
     kernel_ctl.enable_congestion_control('bbr')
 
     # check if qdisc is fq
-    kernel_ctl.check_qdisc('fq')
+    # kernel_ctl.check_qdisc('fq')
+    kernel_ctl.check_qdisc('fq_codel')          # Linux 4.x 使用的是 fq, Linux5.x 使用的是 fq_codel
 
 
 def main():

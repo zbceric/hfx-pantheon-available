@@ -9,7 +9,8 @@
             "args": [
                 "local",
                 "--schemes",
-                "cubic",
+                "bbr",
+                // "cubic",
                 // "--uplink-trace",
                 // "100mbps.trace",
                 // "--append-mm-cmds",
