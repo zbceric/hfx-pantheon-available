@@ -72,5 +72,3 @@ index 976e217..4d03744 100644
 -    '/': operator.div,
 +    '/': operator.truediv,
  }
- 
- 
