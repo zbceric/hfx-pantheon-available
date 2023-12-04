@@ -5,15 +5,15 @@
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
-            "program": "/opt/pantheon/src/experiments/test.py",
+            "program": "${workspaceFolder}/src/experiments/test.py",
             "args": [
                 "local",
                 "--schemes",
-                "xntp",
-                "--uplink-trace",
-                "100mbps.trace",
-                "--append-mm-cmds",
-                "mm-delay 20"
+                "cubic",
+                // "--uplink-trace",
+                // "100mbps.trace",
+                // "--append-mm-cmds",
+                // "mm-delay 20"
             ],
             "console": "integratedTerminal"
         }
