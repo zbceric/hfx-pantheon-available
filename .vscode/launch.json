@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Python: test.py bbr",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/src/experiments/test.py",
@@ -16,7 +16,33 @@
                 // "--append-mm-cmds",
                 // "mm-delay 20"
             ],
-            "console": "integratedTerminal"
-        }
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
+
+        {
+            "name": "Python: tunnel_manager.py.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/experiments/tunnel_manager.py",
+            "args": [],
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
+
+        {
+            "name": "Python: test.py bbr cubic",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/experiments/test.py",
+            "args": [
+                "local",
+                "--schemes",
+                "bbr cubic",
+                "--uplink-trace",
+                "100mbps.trace",
+                "--append-mm-cmds",
+                "mm-delay 20"
+            ],
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
     ]
 }

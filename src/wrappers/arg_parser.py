@@ -44,8 +44,8 @@ def parse_wrapper_args(run_first):
 
 
 def receiver_first():
-    return parse_wrapper_args('receiver')
+    return parse_wrapper_args('receiver')           # 先启动 receiver
 
 
 def sender_first():
-    return parse_wrapper_args('sender')
+    return parse_wrapper_args('sender')             # 先启动 sender

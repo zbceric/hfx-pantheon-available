@@ -17,19 +17,28 @@ def main():
     # register SIGINT and SIGTERM events to clean up gracefully before quit
     def stop_signal_handler(signum, frame):
         for tun_id in procs:
-            utils.kill_proc_group(procs[tun_id])
+            utils.kill_proc_group(procs[tun_id])                    # 关闭全部 tunnel
 
         sys.exit('tunnel_manager: caught signal %s and cleaned up\n' % signum)
 
-    signal.signal(signal.SIGINT, stop_signal_handler)
-    signal.signal(signal.SIGTERM, stop_signal_handler)
+    signal.signal(signal.SIGINT, stop_signal_handler)               # SIGTERM 关闭程序信号
+    signal.signal(signal.SIGTERM, stop_signal_handler)              # 接收 ctrl+c 信号
 
-    sys.stdout.write('tunnel manager is running\n')
+    sys.stdout.write('tunnel manager is running\n')                 # 正在运行 tunnel
     sys.stdout.flush()
 
 
     while True:
-        input_cmd = sys.stdin.readline().strip()
+        input_cmd = sys.stdin.readline().strip()                    
+        # command 1. prompt    [len = 2]        打印提示信息
+        #            usage:   'prompt tsm\n'    打印 [tsm]
+        # command 2. tunnel id [len > 2]        与 tunnel 相关的指令, 其中 id 是 tunnel 的编号, 启动的 tunnel 进程存储在 procs[id]
+        #         2.1   tunnel id mm-tunnelclient ...   启动 mm-tunnel client
+        #         2.2   tunnel id mm-tunnelserver ...   启动 mm-tunnel server
+        #         2.3   tunnel id python ...    在 mm-tunnel 进程内执行 python 脚本, 将 cmd 传入进程 procs[id] 执行
+        #         2.3.1 tunnel id python src/wrappers/bbr.py receiver       启动 bbr 的 receiver
+        #         2.4   tunnel id readline      从 procs[id] 中读取一行, 然后输入自己的标准输出, tunnel_manager 的创建者就可以读取 procs[id] 的输出了
+        # command 3. halt      [len = 1]        挂起, 将全部 procs[id] 进程终止
 
         # print all the commands fed into tunnel manager
         if prompt:
@@ -44,7 +53,7 @@ def main():
                 continue
 
             try:
-                tun_id = int(cmd[1])
+                tun_id = int(cmd[1])                    # 第二个参数是 tun_id
             except ValueError:
                 sys.stderr.write('error: usage: tunnel ID CMD...\n')
                 continue
@@ -66,7 +75,7 @@ def main():
                 # cmd_to_run[0] = 'mm-delay 30 '+ cmd_to_run[0]
                 # tun_id fd
                 procs[tun_id] = Popen(cmd_to_run, stdin=PIPE,
-                                      stdout=PIPE, preexec_fn=os.setsid)
+                                      stdout=PIPE, preexec_fn=os.setsid)        # 开启子进程
             elif cmd[2] == 'python':  # run python scripts inside tunnel
                 if tun_id not in procs:
                     sys.stderr.write(
@@ -74,7 +83,7 @@ def main():
 
                 procs[tun_id].stdin.write((cmd_to_run + '\n').encode('utf-8'))
                 procs[tun_id].stdin.flush()
-            elif cmd[2] == 'readline':  # readline from stdout of tunnel 
+            elif cmd[2] == 'readline':  # readline from stdout of tunnel        # 从 tunnel 的标准输出读取一行数据
                 if len(cmd) != 3:
                     sys.stderr.write('error: usage: tunnel ID readline\n')
                     continue
@@ -83,7 +92,6 @@ def main():
                     sys.stderr.write(
                         'error: run tunnel client or server first\n')
 
-                # 给出了ip地址 mm-runnelclient和mm-tunnelserver应该是pantheon自身创建的
                 sys.stdout.write(procs[tun_id].stdout.readline().decode('utf-8'))
                 sys.stdout.flush()
             else:
@@ -96,13 +104,13 @@ def main():
                 continue
 
             prompt = cmd[1].strip()
-        elif cmd[0] == 'halt':  # terminate all tunnel processes and quit
+        elif cmd[0] == 'halt':  # terminate all tunnel processes and quit   挂起
             if len(cmd) != 1:
                 sys.stderr.write('error: usage: halt\n')
                 continue
 
             for tun_id in procs:
-                utils.kill_proc_group(procs[tun_id])
+                utils.kill_proc_group(procs[tun_id])                # 杀掉全部 tunnel 进程
 
             sys.exit(0)
         else:

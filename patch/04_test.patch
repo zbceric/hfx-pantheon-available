@@ -1,0 +1,1298 @@
+diff --git a/.vscode/launch.json b/.vscode/launch.json
+index 3f8cbd8..94c0b57 100755
+--- a/.vscode/launch.json
++++ b/.vscode/launch.json
+@@ -2,7 +2,7 @@
+     "version": "0.2.0",
+     "configurations": [
+         {
+-            "name": "Python: Current File",
++            "name": "Python: test.py bbr",
+             "type": "python",
+             "request": "launch",
+             "program": "${workspaceFolder}/src/experiments/test.py",
+@@ -16,7 +16,33 @@
+                 // "--append-mm-cmds",
+                 // "mm-delay 20"
+             ],
+-            "console": "integratedTerminal"
+-        }
++            "console": "integratedTerminal",            // 默认值, 新建一个终端
++        },
++
++        {
++            "name": "Python: tunnel_manager.py.py",
++            "type": "python",
++            "request": "launch",
++            "program": "${workspaceFolder}/src/experiments/tunnel_manager.py",
++            "args": [],
++            "console": "integratedTerminal",            // 默认值, 新建一个终端
++        },
++
++        {
++            "name": "Python: test.py bbr cubic",
++            "type": "python",
++            "request": "launch",
++            "program": "${workspaceFolder}/src/experiments/test.py",
++            "args": [
++                "local",
++                "--schemes",
++                "bbr cubic",
++                "--uplink-trace",
++                "100mbps.trace",
++                "--append-mm-cmds",
++                "mm-delay 20"
++            ],
++            "console": "integratedTerminal",            // 默认值, 新建一个终端
++        },
+     ]
+ }
+\ No newline at end of file
+diff --git a/.vscode/settings.json b/.vscode/settings.json
+index 8d3c446..0240ad3 100755
+--- a/.vscode/settings.json
++++ b/.vscode/settings.json
+@@ -1,8 +1,19 @@
+ {
+     "git.ignoreLimitWarning": true,
+-    "terminal.integrated.automationProfile.linux": {
+-        "path": "/bin/bash",
+-    },
+     "python.analysis.inlayHints.functionReturnTypes": true,
+     "cmake.sourceDirectory": "/home/zhangbochun/pantheon-3/third_party/proto-quic/src/third_party/boringssl/src/crypto/buf",
++    // "terminal.integrated.shellIntegration.suggestEnabled": true,
++    // "terminal.integrated.shellIntegration.enabled": true,
++    // "terminal.integrated.profiles.linux": {
++    //     "bash": {
++    //         "path": "/bin/bash",
++    //         "icon": "terminal-bash",
++    //         "args": ["-c", "sshpass -p 680217 ssh zhangbochun@localhost"],
++    //     },
++    // },
++    // "terminal.integrated.automationProfile.linux": {
++    //     "path": "/bin/sh",
++    //     "args": ["-c", "echo hello~~"]
++    // },
++
+ }
+\ No newline at end of file
+diff --git a/src/experiments/arg_parser.py b/src/experiments/arg_parser.py
+index 4f0ff6f..926a83a 100755
+--- a/src/experiments/arg_parser.py
++++ b/src/experiments/arg_parser.py
+@@ -9,11 +9,11 @@ from helpers import utils
+ 
+ 
+ def verify_schemes(schemes):
+-    schemes = schemes.split()
+-    all_schemes = utils.parse_config()['schemes'].keys()
++    schemes = schemes.split()                               # 分割字符串
++    all_schemes = utils.parse_config()['schemes'].keys()    # 加载 ~/pantheon/src/config.yml, 并获取 key
+ 
+     for cc in schemes:
+-        if cc not in all_schemes:
++        if cc not in all_schemes:       # 存在无法测试的算法
+             sys.exit('%s is not a scheme included in src/config.yml' % cc)
+ 
+ 
+@@ -63,11 +63,11 @@ def parse_setup():
+ 
+     args = parser.parse_args()
+     if args.schemes is not None:
+-        verify_schemes(args.schemes)
++        verify_schemes(args.schemes)                            # 如果 cc 不在 config.yml, 退出
+ 
+-    if args.install_deps:
++    if args.install_deps:                                       # 参数是 install_deps 检查 all 或者 schemes 是否均为空
+         if not args.all and args.schemes is None:
+-            sys.exit('must specify --all or --schemes '
++            sys.exit('must specify --all or --schemes '         # 均为空则报错
+                      'when --install-deps is given')
+ 
+         if args.setup:
+@@ -81,38 +81,38 @@ def parse_test_shared(local, remote, config_args):
+         if config_args.config_file is None:
+             mode.add_argument(
+                 '-f', '--flows', type=int, default=1,
+-                help='number of flows (default 1)')
++                help='number of flows (default 1)')                         # -f | --flow : 1 (启用的流数量)
+         mode.add_argument(
+             '-t', '--runtime', type=int, default=30,
+-            help='total runtime in seconds (default 30)')
++            help='total runtime in seconds (default 30)')                   # -t | --time : 30 (测试时间)
+         mode.add_argument(
+             '--interval', type=int, default=0,
+-            help='interval in seconds between two flows (default 0)')
++            help='interval in seconds between two flows (default 0)')       # --interval : 0 (间隔时间)
+         mode.add_argument(
+             '--datapath', default = '', 
+-            help = 'add the log path the put the log files'
++            help = 'add the log path the put the log files'                 # --datapath : '' (输出位置)
+         )
+ 
+-        if config_args.config_file is None:
+-            group = mode.add_mutually_exclusive_group(required=True)
++        if config_args.config_file is None:                                         # 没有配置 config_file 时
++            group = mode.add_mutually_exclusive_group(required=True)                # 添加一个互斥的参数组, 这能配置其中之一
+             group.add_argument('--all', action='store_true',
+-                           help='test all schemes specified in src/config.yml')
++                           help='test all schemes specified in src/config.yml')     # 测试全部算法
+             group.add_argument('--schemes', metavar='"SCHEME1 SCHEME2..."',
+-                               help='test a space-separated list of schemes')
++                               help='test a space-separated list of schemes')       # 测试部分算法, 需要显式设置
+ 
+         # metavar 只是作为展示的一个例子
+         mode.add_argument('--run-times', metavar='TIMES', type=int, default=1,
+-                          help='run times of each scheme (default 1)')
++                          help='run times of each scheme (default 1)')              # 各个算法运行的次数
+         mode.add_argument('--start-run-id', metavar='ID', type=int, default=1,
+-                          help='run ID to start with')
++                          help='run ID to start with')                              # 从哪个 ID 开始运行 id, 主要为了标记 log 数据
+         mode.add_argument('--random-order', action='store_true',
+-                          help='test schemes in random order')
++                          help='test schemes in random order')                      # 随机顺序运行
+         mode.add_argument(
+             '--data-dir', metavar='DIR',
+-            default=path.join(context.src_dir, 'experiments', 'data'),
++            default=path.join(context.src_dir, 'experiments', 'data'),              # 数据存储位置, 默认值为 src/experiments/data
+             help='directory to save all test logs, graphs, '
+             'metadata, and report (default pantheon/src/experiments/data)')
+-        mode.add_argument(
++        mode.add_argument(                                                          # 是否使用 pkill
+             '--pkill-cleanup', action='store_true', help='clean up using pkill'
+             ' (send SIGKILL when necessary) if there were errors during tests')
+ 
+@@ -120,60 +120,60 @@ def parse_test_shared(local, remote, config_args):
+ def parse_test_local(local):
+     local.add_argument(
+         '--uplink-trace', metavar='TRACE',
+-        default=path.join(context.src_dir, 'experiments', '12mbps.trace'),
++        default=path.join(context.src_dir, 'experiments', '12mbps.trace'),      # local 测试, 上行链路
+         help='uplink trace (from sender to receiver) to pass to mm-link '
+         '(default pantheon/test/12mbps.trace)')
+     local.add_argument(
+         '--downlink-trace', metavar='TRACE',
+         default=path.join(context.src_dir, 'experiments', '12mbps.trace'),
+-        help='downlink trace (from receiver to sender) to pass to mm-link '
++        help='downlink trace (from receiver to sender) to pass to mm-link '     # local 测试, 下行链路
+         '(default pantheon/test/12mbps.trace)')
+     local.add_argument(
+         '--prepend-mm-cmds', metavar='"CMD1 CMD2..."',
+-        help='mahimahi shells to run outside of mm-link')
++        help='mahimahi shells to run outside of mm-link')                       # mm-link 指令外用到的 cmd
+     local.add_argument(
+         '--append-mm-cmds', metavar='"CMD1 CMD2..."',
+-        help='mahimahi shells to run inside of mm-link')
++        help='mahimahi shells to run inside of mm-link')                        # mm-link 指令内用到的 cmd, 例如 'mm-delay 20'
+     local.add_argument(
+         '--extra-mm-link-args', metavar='"ARG1 ARG2..."',
+         help='extra arguments to pass to mm-link when running locally. Note '
+         'that uplink (downlink) always represents the link from sender to '
+-        'receiver (from receiver to sender)')
++        'receiver (from receiver to sender)')       # mm-link 额外参数 [uplink: sender to receiver] [downlink: receiver to sender]
+ 
+ 
+ def parse_test_remote(remote):
+     remote.add_argument(
+         '--sender', choices=['local', 'remote'], default='local',
+         action='store', dest='sender_side',
+-        help='the side to be data sender (default local)')
++        help='the side to be data sender (default local)')                      # 设置 sender 是 local 还是 remote 
+     remote.add_argument(
+         '--tunnel-server', choices=['local', 'remote'], default='remote',
+-        action='store', dest='server_side',
++        action='store', dest='server_side',                                     # 设置 tunnel-server 是 local 还是 remote 
+         help='the side to run pantheon tunnel server on (default remote)')
+     remote.add_argument(
+         '--local-addr', metavar='IP',
+         help='local IP address that can be reached from remote host, '
+-        'required if "--tunnel-server local" is given')
++        'required if "--tunnel-server local" is given')                         # 本地 IP
+     remote.add_argument(
+         '--local-if', metavar='INTERFACE',
+-        help='local interface to run pantheon tunnel on')
++        help='local interface to run pantheon tunnel on')                       # 本地运行 pantheon tunnel 的接口
+     remote.add_argument(
+         '--remote-if', metavar='INTERFACE',
+-        help='remote interface to run pantheon tunnel on')
++        help='remote interface to run pantheon tunnel on')                      # 远程运行 pantheon tunnel 的接口
+     remote.add_argument(
+         '--ntp-addr', metavar='HOST',
+-        help='address of an NTP server to query clock offset')
++        help='address of an NTP server to query clock offset')                  # 同步时钟的 NTP
+     remote.add_argument(
+         '--local-desc', metavar='DESC',
+-        help='extra description of the local side')
++        help='extra description of the local side')                             # ? 被动的额外描述
+     remote.add_argument(
+         '--remote-desc', metavar='DESC',
+-        help='extra description of the remote side')
++        help='extra description of the remote side')                            # ? 远程的额外描述
+ 
+ 
+ def verify_test_args(args):
+     if args.flows == 0:
+-        prepend = getattr(args, 'prepend_mm_cmds', None)
++        prepend = getattr(args, 'prepend_mm_cmds', None)                        # 从 args 中查找参数
+         append = getattr(args, 'append_mm_cmds', None)
+         extra = getattr(args, 'extra_mm_link_args', None)
+         if append is not None or prepend is not None or extra is not None:
+@@ -181,35 +181,35 @@ def verify_test_args(args):
+                      '--extra-mm-link-args without pantheon tunnels')
+ 
+     if args.runtime > 60 or args.runtime <= 0:
+-        sys.exit('runtime cannot be non-positive or greater than 60 s')
++        sys.exit('runtime cannot be non-positive or greater than 60 s')         # 测试时间限制在 0-60s
+     if args.flows < 0:
+-        sys.exit('flow cannot be negative')
++        sys.exit('flow cannot be negative')                                     # 流数不能为负数
+     if args.interval < 0:
+-        sys.exit('interval cannot be negative')
++        sys.exit('interval cannot be negative')                                 # 间隔不能为负数
+     if args.flows > 0 and args.interval > 0:
+-        if (args.flows - 1) * args.interval > args.runtime:
++        if (args.flows - 1) * args.interval > args.runtime:                     # 间隔不能溢出测试时间
+             sys.exit('interval time between flows is too long to be '
+                      'fit in runtime')
+ 
+-def parse_test_config(test_config, local, remote):
++def parse_test_config(test_config, local, remote):      # 检查配置文件至少有一个测试名称和流程描述
+     # Check config file has atleast a test-name and a description of flows
+     if 'test-name' not in test_config:
+-        sys.exit('Config file must have a test-name argument')
++        sys.exit('Config file must have a test-name argument')  # 必须有一个 test-name
+     if 'flows' not in test_config:
+-        sys.exit('Config file must specify flows')
++        sys.exit('Config file must specify flows')              # 配置文件必须指定流
+ 
+     defaults = {}
+-    defaults.update(**test_config)
++    defaults.update(**test_config)                              # 创建字典
+     defaults['schemes'] = None
+     defaults['all'] = False
+     defaults['flows'] = len(test_config['flows'])
+     defaults['test_config'] = test_config
+ 
+-    local.set_defaults(**defaults)
++    local.set_defaults(**defaults)                              # 设置默认值
+     remote.set_defaults(**defaults)
+ 
+ 
+-def parse_test():
++def parse_test():       # 在解析其他命令行选项之前加载配置文件 [src/config/cubic.yml], 命令行选项将覆盖配置文件中的选项
+     # Load configuration file before parsing other command line options
+     # Command line options will override options in config file
+     config_parser = argparse.ArgumentParser(
+@@ -219,51 +219,46 @@ def parse_test():
+     config_parser.add_argument('-c','--config_file', metavar='CONFIG',
+                                help='path to configuration file. '
+                                'command line arguments will override options '
+-                               'in config file. ')
+-    config_args, remaining_argv = config_parser.parse_known_args()
++                               'in config file. ')                                  # 参数 -c | --config_file (配置文件路径)
++    config_args, remaining_argv = config_parser.parse_known_args()                  # 解析参数, 得到配置路径 & 剩余参数
+ 
+     parser = argparse.ArgumentParser(
+-        description='perform congestion control tests',
++        description='perform congestion control tests',                             # 执行拥塞算法测试
+         parents=[config_parser])
+ 
+-    subparsers = parser.add_subparsers(dest='mode')
++    subparsers = parser.add_subparsers(dest='mode')                                 # 返回一个特殊的动作对象, 该对象只有一个方法 add_parser()
+     # local和remote分别为一个arguementParser
+     local = subparsers.add_parser(
+-        'local', help='test schemes locally in mahimahi emulated networks')
++        'local', help='test schemes locally in mahimahi emulated networks')         # local  mode subparser
+     remote = subparsers.add_parser(
+-        'remote', help='test schemes between local and remote in '
++        'remote', help='test schemes between local and remote in '                  # remote mode subparser
+         'real-life networks')
+-    # remote 需要添加remote_path参数，格式为user@ipaddress:pantheon directory
+-    remote.add_argument(
++    remote.add_argument(                                # remote 需要添加remote_path参数，格式为user@ipaddress:pantheon directory
+         'remote_path', metavar='HOST:PANTHEON-DIR',
+-        help='HOST ([user@]IP) and PANTHEON-DIR (remote pantheon directory)')
++        help='HOST ([user@]IP) and PANTHEON-DIR (remote pantheon directory)')       # 为远程模式添加参数 remote_path
+ 
+-    # 解析local和remote共有的参数
+-    parse_test_shared(local, remote, config_args)
+-    # 分别解析local和remote独有的参数
+-    parse_test_local(local)
+-    parse_test_remote(remote)
++    parse_test_shared(local, remote, config_args)           # 向 local parser 和 remote parser 添加共有的参数
++    parse_test_local(local)                                 # 向 local parser 添加独有的参数
++    parse_test_remote(remote)                               # 向 remote parser 添加独有的参数
+ 
+     # Make settings in config file the defaults
+     test_config = None
+-    if config_args.config_file is not None:
+-        with open(config_args.config_file) as f:
+-            # 加载数据
+-            test_config = yaml.safe_load(f)
+-        parse_test_config(test_config, local, remote)
+-
+-    # 获取parser中解析到的属性
+-    args = parser.parse_args(remaining_argv)
+-    if args.schemes is not None:
+-        verify_schemes(args.schemes)   
+-        args.test_config = None
++    if config_args.config_file is not None:                 # 配置了 Config File
++        with open(config_args.config_file) as f:            # 打开配置文件
++            test_config = yaml.safe_load(f)                 # 加载数据
++        parse_test_config(test_config, local, remote)       # 测试 test_config 是否可用
++
++    args = parser.parse_args(remaining_argv)                # 从剩余的参数中解析参数
++    if args.schemes is not None:                            # 指定了算法
++        verify_schemes(args.schemes)                        # 验证目标 cc 都在配置文件中
++        args.test_config = None                             # 情况 test_config
+     elif not args.all:
+         assert(test_config is not None)
+-        schemes = ' '.join([flow['scheme'] for flow in test_config['flows']])
+-        verify_schemes(schemes)
++        schemes = ' '.join([flow['scheme'] for flow in test_config['flows']])   # 如果没有指定 --all, 就要解析 --scheme
++        verify_schemes(schemes)                             # 验证这些 scheme
+ 
+     # 确认属性
+     verify_test_args(args)
+-    utils.make_sure_dir_exists(args.data_dir)
++    utils.make_sure_dir_exists(args.data_dir)               # 确认 dir 存在
+ 
+     return args
+diff --git a/src/experiments/data/pantheon_metadata.json b/src/experiments/data/pantheon_metadata.json
+index def997b..980091f 100644
+--- a/src/experiments/data/pantheon_metadata.json
++++ b/src/experiments/data/pantheon_metadata.json
+@@ -1,16 +1,18 @@
+ {
++    "append_mm_cmds": "mm-delay 20",
+     "cc_schemes": [
+-        "bbr"
++        "bbr",
++        "cubic"
+     ],
+     "datapath": "",
+     "downlink_trace": "12mbps.trace",
+     "flows": 1,
+-    "git_summary": "branch: install @ 313b4aa9f14bd9c46aecf5ec568b1d25b4945b84\nthird_party/fillp @ d6da1459332fcee56963885d7eba17e6a32d4519\nthird_party/fillp-sheep @ 0e5bb722943babcd2b090d2c64fcd45e12e923f9\nthird_party/genericCC @ d0153f8e594aa89e93b032143cedbdfe58e562f4\nthird_party/indigo @ 463d89b09699a57bfdfbae351646df6a60040b90\n M dagger/dagger.py\n M dagger/experts.py\n M dagger/models.py\n M dagger/project_root.py\n M dagger/run_sender.py\n M dagger/train.py\n M dagger/worker.py\n M env/environment.py\n M env/receiver.py\n M env/sender.py\n M helpers/helpers.py\n M helpers/my_gce_helper.py\n M helpers/pkill.py\nthird_party/libutp @ b3465b942e2826f2b179eaab4a906ce6bb7cf3cf\nthird_party/pantheon-tunnel @ f866d3f58d27afd942717625ee3a354cc2e802bd\nthird_party/pcc @ 1afc958fa0d66d18b623c091a55fec872b4981e1\n M receiver/src/buffer.h\n M receiver/src/core.cpp\n M sender/src/buffer.h\n M sender/src/core.cpp\nthird_party/pcc-experimental @ cd43e34e3f5f5613e8acd08fab92c4eb24f974ab\nthird_party/proto-quic @ 77961f1a82733a86b42f1bc8143ebc978f3cff42\nthird_party/scream-reproduce @ f099118d1421aa3131bf11ff1964974e1da3bdb2\nthird_party/sprout @ 366e35c6178b01e31d4a46ad18c74f9415f19a26\nthird_party/verus @ d4b447ea74c6c60a261149af2629562939f9a494\n M src/verus.hpp\n M tools/plot.py\nthird_party/vivace @ 2baf86211435ae071a32f96b7d8c504587f5d7f4\nthird_party/webrtc @ 3f0cc2a9061a41b6f9dde4735770d143a1fa2851\n",
++    "git_summary": "branch: install @ db1749eda95987939927b1fa7756750f1f8db551\nthird_party/fillp @ d6da1459332fcee56963885d7eba17e6a32d4519\nthird_party/fillp-sheep @ 0e5bb722943babcd2b090d2c64fcd45e12e923f9\nthird_party/genericCC @ d0153f8e594aa89e93b032143cedbdfe58e562f4\nthird_party/indigo @ 463d89b09699a57bfdfbae351646df6a60040b90\n M dagger/dagger.py\n M dagger/experts.py\n M dagger/models.py\n M dagger/project_root.py\n M dagger/run_sender.py\n M dagger/train.py\n M dagger/worker.py\n M env/environment.py\n M env/receiver.py\n M env/sender.py\n M helpers/helpers.py\n M helpers/my_gce_helper.py\n M helpers/pkill.py\nthird_party/libutp @ b3465b942e2826f2b179eaab4a906ce6bb7cf3cf\nthird_party/pantheon-tunnel @ f866d3f58d27afd942717625ee3a354cc2e802bd\nthird_party/pcc @ 1afc958fa0d66d18b623c091a55fec872b4981e1\n M receiver/src/buffer.h\n M receiver/src/core.cpp\n M sender/src/buffer.h\n M sender/src/core.cpp\nthird_party/pcc-experimental @ cd43e34e3f5f5613e8acd08fab92c4eb24f974ab\nthird_party/proto-quic @ 77961f1a82733a86b42f1bc8143ebc978f3cff42\nthird_party/scream-reproduce @ f099118d1421aa3131bf11ff1964974e1da3bdb2\nthird_party/sprout @ 366e35c6178b01e31d4a46ad18c74f9415f19a26\nthird_party/verus @ d4b447ea74c6c60a261149af2629562939f9a494\n M src/verus.hpp\n M tools/plot.py\nthird_party/vivace @ 2baf86211435ae071a32f96b7d8c504587f5d7f4\nthird_party/webrtc @ 3f0cc2a9061a41b6f9dde4735770d143a1fa2851\n",
+     "interval": 0,
+     "mode": "local",
+     "random_order": false,
+     "run_times": 1,
+     "runtime": 30,
+     "start_run_id": 1,
+-    "uplink_trace": "12mbps.trace"
++    "uplink_trace": "100mbps.trace"
+ }
+\ No newline at end of file
+diff --git a/src/experiments/git_summary.sh b/src/experiments/git_summary.sh
+index 021fd2d..306a5c5 100755
+--- a/src/experiments/git_summary.sh
++++ b/src/experiments/git_summary.sh
+@@ -1,7 +1,7 @@
+ #!/bin/sh
+ 
+-echo -n 'branch: '
+-git rev-parse --abbrev-ref @ | head -c -1
+-echo -n ' @ '
+-git rev-parse @
+-git submodule foreach --quiet 'echo $path @ `git rev-parse @`; git status -s --untracked-files=no --porcelain'
++echo -n 'branch: '                                  # 打印 "branch ", 不换行
++git rev-parse --abbrev-ref @ | head -c -1           # 打印当前分支名称
++echo -n ' @ '                                       # 打印 " @ "
++git rev-parse @                                     # 打印仓库信息
++git submodule foreach --quiet 'echo $path @ `git rev-parse @`; git status -s --untracked-files=no --porcelain'  # 遍历打印子模块信息
+diff --git a/src/experiments/test.py b/src/experiments/test.py
+index eecb5c7..33f9990 100755
+--- a/src/experiments/test.py
++++ b/src/experiments/test.py
+@@ -18,26 +18,26 @@ from helpers import utils, kernel_ctl
+ from helpers.subprocess_wrappers import Popen, call
+ 
+ 
+-Flow = namedtuple('Flow', ['cc', # replace self.cc
+-                           'cc_src_local', # replace self.cc_src
+-                           'cc_src_remote', # replace self.r[cc_src]
+-                           'run_first', # replace self.run_first
+-                           'run_second']) # replace self.run_second
++Flow = namedtuple('Flow', ['cc',                # replace self.cc
++                           'cc_src_local',      # replace self.cc_src
++                           'cc_src_remote',     # replace self.r[cc_src]
++                           'run_first',         # replace self.run_first
++                           'run_second'])       # replace self.run_second
+ 
+ 
+ class Test(object):
+     def __init__(self, args, run_id, cc):
+     
+-        self.mode = args.mode
++        self.mode = args.mode                                       # 'local' or 'remote'
+         self.run_id = run_id
+         self.cc = cc
+-        self.data_dir = path.abspath(args.data_dir)
++        self.data_dir = path.abspath(args.data_dir)                 # src/experiments/data
+ 
+         # shared arguments between local and remote modes
+-        self.flows = args.flows
+-        self.runtime = args.runtime
+-        self.interval = args.interval
+-        self.run_times = args.run_times
++        self.flows = args.flows                                     # default: 1
++        self.runtime = args.runtime                                 # default: 30
++        self.interval = args.interval                               # default: 0
++        self.run_times = args.run_times                             # default: 1
+ 
+         # used for cleanup
+         self.proc_first = None
+@@ -50,11 +50,11 @@ class Test(object):
+ 
+         # local mode
+         if self.mode == 'local':
+-            self.datalink_trace = args.uplink_trace
+-            self.acklink_trace = args.downlink_trace
+-            self.prepend_mm_cmds = args.prepend_mm_cmds
+-            self.append_mm_cmds = args.append_mm_cmds
+-            self.extra_mm_link_args = args.extra_mm_link_args
++            self.datalink_trace = args.uplink_trace                 # src/experiments/12mbps.trace
++            self.acklink_trace = args.downlink_trace                # src/experiments/12mbps.trace
++            self.prepend_mm_cmds = args.prepend_mm_cmds             # prepend mm-link
++            self.append_mm_cmds = args.append_mm_cmds               # prepend mm-link --uplink-log=... --downlink-log=... append
++            self.extra_mm_link_args = args.extra_mm_link_args       # prepend mm-link --uplink-log=... --downlink-log=... append extra
+ 
+             # for convenience
+             self.sender_side = 'remote'
+@@ -79,16 +79,16 @@ class Test(object):
+         # arguments when there's a config
+         self.test_config = None
+         if hasattr(args, 'test_config'):
+-            self.test_config = args.test_config
++            self.test_config = args.test_config         # 加载 test_config
+ 
+-        if self.test_config is not None:
+-            self.cc = self.test_config['test-name']
++        if self.test_config is not None:                # 如果 test_config 有效
++            self.cc = self.test_config['test-name']     # 从中查找测试算法, (如果没有配置 test_config, pantheon 通过命令行获取 cc, 否则通过 test_config 获取参数)
+             self.flow_objs = {}
+             cc_src_remote_dir = ''
+             if self.mode == 'remote':
+-                cc_src_remote_dir = r['base_dir']
++                cc_src_remote_dir = ['base_dir']
+ 
+-            tun_id = 1
++            tun_id = 1                                  # 隧道 id
+             for flow in args.test_config['flows']:
+                 cc = flow['scheme']
+                 run_first, run_second = utils.who_runs_first(cc)
+@@ -189,13 +189,13 @@ class Test(object):
+ 
+     def setup(self):
+         # setup commonly used paths
+-        self.cc_src = path.join(context.src_dir, 'wrappers', self.cc + '.py')
++        self.cc_src = path.join(context.src_dir, 'wrappers', self.cc + '.py')       # "src/wrappers/bbr.py"
+         self.tunnel_manager = path.join(context.src_dir, 'experiments',
+-                                        'tunnel_manager.py')
++                                        'tunnel_manager.py')                        # "src/experiments/tunnel_manager.py"
+ 
+         # record who runs first
+         if self.test_config is None:
+-            self.run_first, self.run_second = utils.who_runs_first(self.cc)
++            self.run_first, self.run_second = utils.who_runs_first(self.cc)         # first: receiver, second: sender
+         else:
+             self.run_first = None
+             self.run_second = None
+@@ -204,19 +204,24 @@ class Test(object):
+         self.run_first_setup_time = 3
+ 
+         # setup output logs
+-        self.datalink_name = self.cc + '_datalink_run%d' % self.run_id 
+-        self.acklink_name = self.cc + '_acklink_run%d' % self.run_id 
++        self.datalink_name = self.cc + '_datalink_run%d' % self.run_id              # 'bbr_datalink_run1'
++        self.acklink_name = self.cc + '_acklink_run%d' % self.run_id                # 'bbr_acklink_run1'
+ 
+         self.datalink_log = path.join(
+-            self.data_dir, self.datalink_name + '.log')
++            self.data_dir, self.datalink_name + '.log')             # '/src/experiments/data/bbr_datalink_run1.log'
+         self.acklink_log = path.join(
+-            self.data_dir, self.acklink_name + '.log')
++            self.data_dir, self.acklink_name + '.log')              # '/src/experiments/data/bbr_acklink_run1.log'
+ 
+         if self.flows > 0:
+-            self.prepare_tunnel_log_paths()
++            self.prepare_tunnel_log_paths()                         # 设置 tunnel log 打印路径               
+ 
+         if self.mode == 'local':
+-            self.setup_mm_cmd()
++            self.setup_mm_cmd()                                     
++            # 0: 'mm-link'
++            # 1: '/home/zhangbochun/pantheon-3/src/experiments/12mbps.trace'
++            # 2: '/home/zhangbochun/pantheon-3/src/experiments/12mbps.trace'
++            # 3: '--uplink-log=/home/zhangbochun/pantheon-3/src/experiments/data/bbr_mm_datalink_run1.log'
++            # 4: '--downlink-log=/home/zhangbochun/pantheon-3/src/experiments/data/bbr_mm_acklink_run1.log'
+         else:
+             # record local and remote clock offset
+             if self.ntp_addr is not None:
+@@ -225,7 +230,7 @@ class Test(object):
+ 
+     # test congestion control without running pantheon tunnel
+     def run_without_tunnel(self):
+-        port = utils.get_open_port()
++        port = utils.get_open_port()                                # 获取可用端口
+ 
+         # run the side specified by self.run_first
+         cmd = ['python', self.cc_src, self.run_first, port]
+@@ -262,28 +267,29 @@ class Test(object):
+ 
+     def run_tunnel_managers(self):
+         # run tunnel server manager
+-        if self.mode == 'remote':
+-            if self.server_side == 'local':
+-                ts_manager_cmd = ['python', self.tunnel_manager]
++        if self.mode == 'remote':                                       # 采用 remote 模式测试
++            if self.server_side == 'local':                             # server 在 local
++                ts_manager_cmd = ['python', self.tunnel_manager]        # 使用本地的 tunnel_manager
+             else:
+                 ts_manager_cmd = self.r['ssh_cmd'] + [
+-                    'python', self.r['tunnel_manager']]
++                    'python', self.r['tunnel_manager']]                 # server 在 remote, 使用 ssh 连接远程的 tunnel_manager
+         else:
+-            ts_manager_cmd = ['python', self.tunnel_manager]
++            ts_manager_cmd = ['python', self.tunnel_manager]            # 采用 local 模式测试, 使用本地的 tunnel_manager
++            # 0: 'python'
++            # 1: '/home/zhangbochun/pantheon-3/src/experiments/tunnel_manager.py'
+ 
+-        sys.stderr.write('[tunnel server manager (tsm)] ')
+-        # Popen 的第一个参数即为要执行的命令,是一个子进程
++        sys.stderr.write('[tunnel server manager (tsm)] ')              # 先启用 server
+         self.ts_manager = Popen(ts_manager_cmd, stdin=PIPE, stdout=PIPE,
+-                                preexec_fn=os.setsid)
++                                preexec_fn=os.setsid)       # 调用 tunnel_manager.py, 创建管道, 输入输出重定向到管道, os.setsid 用于在后台运行进程
+         ts_manager = self.ts_manager
+ 
+         while True:
+             running = ts_manager.stdout.readline().decode('utf-8')
+-            if 'tunnel manager is running' in running:
++            if 'tunnel manager is running' in running:          # 等到 ts_manager (server) 运行起来再退出循环
+                 sys.stderr.write(running)
+                 break
+ 
+-        ts_manager.stdin.write(b'prompt [tsm]\n')
++        ts_manager.stdin.write(b'prompt [tsm]\n')               # 写入 prompt [tsm]\n (作为 server)
+         ts_manager.stdin.flush()
+ 
+         # run tunnel client manager
+@@ -295,33 +301,41 @@ class Test(object):
+                 tc_manager_cmd = ['python', self.tunnel_manager]
+         else:
+             tc_manager_cmd = self.mm_cmd + ['python', self.tunnel_manager]
++            # local mode:
++            # 0: 'mm-link'
++            # 1: '/home/zhangbochun/pantheon-3/src/experiments/12mbps.trace'
++            # 2: '/home/zhangbochun/pantheon-3/src/experiments/12mbps.trace'
++            # 3: '--uplink-log=/home/zhangbochun/pantheon-3/src/experiments/data/bbr_mm_datalink_run1.log'
++            # 4: '--downlink-log=/home/zhangbochun/pantheon-3/src/experiments/data/bbr_mm_acklink_run1.log'
++            # 5: 'python'
++            # 6: '/home/zhangbochun/pantheon-3/src/experiments/tunnel_manager.py'
+ 
+         sys.stderr.write('[tunnel client manager (tcm)] ')
+         self.tc_manager = Popen(tc_manager_cmd, stdin=PIPE, stdout=PIPE,
+-                                preexec_fn=os.setsid)
++                                preexec_fn=os.setsid)           # 启动 Mahimahi 生成一个 link, 运行 tc_manager 作为 client
+         tc_manager = self.tc_manager
+ 
+         while True:
+             running = tc_manager.stdout.readline().decode('utf-8')
+             if 'tunnel manager is running' in running:
+-                sys.stderr.write(running)
++                sys.stderr.write(running)                       # 读取到指令, 说明 tc_manager 已经开始运行
+                 break
+ 
+-        tc_manager.stdin.write(b'prompt [tcm]\n')
+-        tc_manager.stdin.flush()
++        tc_manager.stdin.write(b'prompt [tcm]\n')               # 向manager输入 'prompt [tcm]\n' (作为 client)
++        tc_manager.stdin.flush()                                # flush
+ 
+         return ts_manager, tc_manager
+ 
+-    def run_tunnel_server(self, tun_id, ts_manager):
++    def run_tunnel_server(self, tun_id, ts_manager):                    # 启动 server
+         if self.server_side == self.sender_side:
+             ts_cmd = 'mm-tunnelserver --ingress-log=%s --egress-log=%s' % (
+                 self.acklink_ingress_logs[tun_id],
+                 self.datalink_egress_logs[tun_id])
+         else:
+-            # server 是接收端
++            # server 是接收端       server_side 'local', sender_side 'remote'
+             ts_cmd = 'mm-tunnelserver --ingress-log=%s --egress-log=%s' % (
+                 self.datalink_ingress_logs[tun_id],
+-                self.acklink_egress_logs[tun_id])
++                self.acklink_egress_logs[tun_id])       # 'mm-tunnelserver --ingress-log=/home/zhangbochun/pantheon-3/tmp/bbr_datalink_run1_flow1_uid8c558a9c-fa2a-4c34-8861-20f090dfaf25.log.ingress --egress-log=/home/zhangbochun/pantheon-3/tmp/bbr_acklink_run1_flow1_uid8c558a9c-fa2a-4c34-8861-20f090dfaf25.log.egress'
+ 
+         if self.mode == 'remote':
+             if self.server_side == 'remote':
+@@ -332,22 +346,26 @@ class Test(object):
+                     ts_cmd += ' --interface=' + self.local_if
+ 
+         # ts_cmd 格式为tunnel 1 mm-tunnelserver ingress_log_file egress_log_file
+-        ts_cmd = 'tunnel %s %s\n' % (tun_id, ts_cmd)
+-        ts_manager.stdin.write(ts_cmd.encode('utf-8'))
+-        ts_manager.stdin.flush()
++        ts_cmd = 'tunnel %s %s\n' % (tun_id, ts_cmd)            # 'tunnel 1 mm-tunnelserver --ingress-log=/home/zhangbochun/pantheon-3/tmp/bbr_datalink_run1_flow1_uiddb796b9c-3bdf-43ce-a70a-9fcadbc366ff.log.ingress --egress-log=/home/zhangbochun/pantheon-3/tmp/bbr_acklink_run1_flow1_uiddb796b9c-3bdf-43ce-a70a-9fcadbc366ff.log.egress\n'
++        ts_manager.stdin.write(ts_cmd.encode('utf-8'))          # 第一条指令 tunnel 1 mm-tunnelserver, manager 启动 server
++        ts_manager.stdin.flush()                                # 发送给 tsm server
+ 
+         # read the command to run tunnel client
+-        readline_cmd = 'tunnel %s readline\n' % tun_id
++        readline_cmd = 'tunnel %s readline\n' % tun_id          # 第二条指令 tunnel 1 readline, 从中读取一条信息
+         ts_manager.stdin.write(readline_cmd.encode('utf-8'))
+         ts_manager.stdin.flush()
+ 
+-        # cmd_to_run_tc 在这里获取了client的ip地址和port
+-        cmd_to_run_tc = ts_manager.stdout.readline().decode('utf-8').split()
+-        return cmd_to_run_tc 
++        cmd_to_run_tc = ts_manager.stdout.readline().decode('utf-8').split()        # 由 mm-tunnelserver 输出一条启动 mm-tunnelclient 的指令
++        # 0: 'mm-tunnelclient'
++        # 1: 'localhost'
++        # 2: '45491' 
++        # 3: '100.64.0.6' 
++        # 4: '100.64.0.5'
++        return cmd_to_run_tc             # 运行 client 的指令
+ 
+     def run_tunnel_client(self, tun_id, tc_manager, cmd_to_run_tc):
+         if self.mode == 'local':
+-            cmd_to_run_tc[1] = '$MAHIMAHI_BASE'
++            cmd_to_run_tc[1] = '$MAHIMAHI_BASE'             # local mode, 将 localhost 替换为 $MAHIMAHI_BASE
+         else:
+             if self.server_side == 'remote':
+                 cmd_to_run_tc[1] = self.r['ip']
+@@ -365,7 +383,7 @@ class Test(object):
+             tc_cmd = '%s --ingress-log=%s --egress-log=%s' % (
+                 cmd_to_run_tc_str,
+                 self.acklink_ingress_logs[tun_id],
+-                self.datalink_egress_logs[tun_id])
++                self.datalink_egress_logs[tun_id])      # 'mm-tunnelclient $MAHIMAHI_BASE 51953 100.64.0.4 100.64.0.3 --ingress-log=tmp/bbr_acklink_run1_flow1_xxx.log.ingress --egress-log=tmp/bbr_datalink_run1_flow1_xxx.log.egress'
+ 
+         if self.mode == 'remote':
+             if self.server_side == 'remote':
+@@ -375,8 +393,8 @@ class Test(object):
+                 if self.remote_if is not None:
+                     tc_cmd += ' --interface=' + self.remote_if
+ 
+-        tc_cmd = 'tunnel %s %s\n' % (tun_id, tc_cmd)
+-        readline_cmd = 'tunnel %s readline\n' % tun_id
++        tc_cmd = 'tunnel %s %s\n' % (tun_id, tc_cmd)        # 指令前补充 tunnel id
++        readline_cmd = 'tunnel %s readline\n' % tun_id      # 读取指令
+ 
+         # re-run tunnel client after 20s timeout for at most 3 times
+         max_run = 3
+@@ -389,25 +407,25 @@ class Test(object):
+                 return False
+ 
+             # 相同的步骤，先运行起来再readline
+-            tc_manager.stdin.write(tc_cmd.encode('utf-8'))
++            tc_manager.stdin.write(tc_cmd.encode('utf-8'))              # 尝试运行 client mm-tunnelclient
+             tc_manager.stdin.flush()
+             while True:
+-                tc_manager.stdin.write(readline_cmd.encode('utf-8'))
++                tc_manager.stdin.write(readline_cmd.encode('utf-8'))    # 不断读取
+                 tc_manager.stdin.flush()
+ 
+                 signal.signal(signal.SIGALRM, utils.timeout_handler)
+                 signal.alarm(20)
+ 
+                 try:
+-                    got_connection = tc_manager.stdout.readline().decode('utf-8')
++                    got_connection = tc_manager.stdout.readline().decode('utf-8')   # 从中 tc_manager 读取一行数据
+                     sys.stderr.write('Tunnel is connected\n')
+                 except utils.TimeoutError:
+-                    sys.stderr.write('Tunnel connection timeout\n')
++                    sys.stderr.write('Tunnel connection timeout\n')     # 超时
+                     break
+                 except IOError:
+                     sys.stderr.write('Tunnel client failed to connect to '
+                                      'tunnel server\n')
+-                    return False
++                    return False                                        # 没用建立连接
+                 else:
+                     signal.alarm(0)
+                     if 'got connection' in got_connection:
+@@ -416,28 +434,28 @@ class Test(object):
+         return True
+ 
+     def run_first_side(self, tun_id, send_manager, recv_manager,
+-                       send_pri_ip, recv_pri_ip):
++                       send_pri_ip, recv_pri_ip):       # 参数: id, send 进程, recv 进程, send ip, recv ip
+ 
+-        first_src = self.cc_src
+-        second_src = self.cc_src
++        first_src = self.cc_src             # '/home/zhangbochun/pantheon-3/src/wrappers/bbr.py'
++        second_src = self.cc_src            # '/home/zhangbochun/pantheon-3/src/wrappers/bbr.py'、
+ 
+         # 运行第一方并且返回第二方的cmd
+-        if self.run_first == 'receiver':
++        if self.run_first == 'receiver':                    # 如果先运行 receiver
+             if self.mode == 'remote':
+                 if self.sender_side == 'local':
+                     first_src = self.r['cc_src']
+                 else:
+                     second_src = self.r['cc_src']
+ 
+-            port = utils.get_open_port()
++            port = utils.get_open_port()                    # 获取一个端口
+ 
+             first_cmd = 'tunnel %s python %s receiver %s\n' % (
+-                tun_id, first_src, port)
++                tun_id, first_src, port)                            # cmd 1: 'tunnel 1 python src/wrappers/bbr.py receiver port\n'
+             second_cmd = 'tunnel %s python %s sender %s %s\n' % (
+-                tun_id, second_src, recv_pri_ip, port)
++                tun_id, second_src, recv_pri_ip, port)              # cmd 2: 'tunnel 1 python src/wrappers/bbr.py sender recv_ip port\n'
+ 
+-            recv_manager.stdin.write(first_cmd.encode('utf-8'))
+-            recv_manager.stdin.flush()
++            recv_manager.stdin.write(first_cmd.encode('utf-8'))     # 将指令发送给 recv tunnel manage, 该指令被发送给 mm-tunnelserver, 调用 src/wrappers/bbr.py
++            recv_manager.stdin.flush()                              # 每个算法都提供了启动流的方式, bbr 启动了 iperf server
+         elif self.run_first == 'sender':  # self.run_first == 'sender'
+             if self.mode == 'remote':
+                 if self.sender_side == 'local':
+@@ -496,23 +514,23 @@ class Test(object):
+                 send_manager.stdin.write(first_cmd.encode('utf-8'))
+                 send_manager.stdin.flush()
+ 
+-        return second_cmd
++        return second_cmd           # 返回第二条指令, 对于 bbr local 测试来说, 就是启动 iperf -c xxx 的指令
+ 
+     def run_second_side(self, send_manager, recv_manager, second_cmds):
+         time.sleep(self.run_first_setup_time)
+-        self.run_first = 'receiver'
+-        start_time = time.time()
+-        self.test_start_time = utils.utc_time()
++        self.run_first = 'receiver'                     # run_first: receiver
++        start_time = time.time()                        # 当前时间
++        self.test_start_time = utils.utc_time()         # 获取 utc 时间
+ 
+         # start each flow self.interval seconds after the previous one
+-        for i in range(len(second_cmds)):
++        for i in range(len(second_cmds)):               # 查看有几条指令需要启动
+             if i != 0:
+-                time.sleep(self.interval)
+-            second_cmd = second_cmds[i]
++                time.sleep(self.interval)               # 间隔 interval 时间启动
++            second_cmd = second_cmds[i]                 # 'tunnel 1 python /home/zhangbochun/pantheon-3/src/wrappers/bbr.py sender 100.64.0.3 40539\n'
+ 
+             
+             if self.run_first == 'receiver':
+-                send_manager.stdin.write(second_cmd.encode('utf-8'))
++                send_manager.stdin.write(second_cmd.encode('utf-8'))        # 向 send_manager 发送指令, 启动 wrappers/bbr.py, 建立新的 iperf 流
+                 send_manager.stdin.flush()
+             elif self.run_first == 'sender':
+                 recv_manager.stdin.write(second_cmd.encode('utf-8'))
+@@ -538,7 +556,7 @@ class Test(object):
+         return True
+ 
+     # test congestion control using tunnel client and tunnel server
+-    def run_with_tunnel(self):
++    def run_with_tunnel(self):                                  # 
+         # run pantheon tunnel server and client managers
+         ts_manager, tc_manager = self.run_tunnel_managers()
+ 
+@@ -548,43 +566,43 @@ class Test(object):
+             send_manager = ts_manager
+             recv_manager = tc_manager
+         else:
+-            send_manager = tc_manager
+-            recv_manager = ts_manager
++            send_manager = tc_manager                       # tunnel client - sender
++            recv_manager = ts_manager                       # tunnel server - receiver
+ 
+         # run every flow
+         second_cmds = []
+-        for tun_id in range(1, self.flows + 1):
++        for tun_id in range(1, self.flows + 1):                                     # 启动 flows 个流, id 从 1 开始
+             # run tunnel server for tunnel tun_id
+-            cmd_to_run_tc = self.run_tunnel_server(tun_id, ts_manager)
++            cmd_to_run_tc = self.run_tunnel_server(tun_id, ts_manager)              # 启动 tunnel server
+ 
+             # run tunnel client for tunnel tun_id
+-            if not self.run_tunnel_client(tun_id, tc_manager, cmd_to_run_tc):
++            if not self.run_tunnel_client(tun_id, tc_manager, cmd_to_run_tc):       # 建立 mm-client
+                 return False
+ 
+-            # 返回值 mm-tunnelclient localhost 49242 100.64.0.2 100.64.0.1
+-            tc_pri_ip = cmd_to_run_tc[3]  # tunnel client private IP
++            # 返回值 mm-tunnelclient localhost 49242 100.64.0.2 100.64.0.1          # mm-tunnelclient localhost port client_ip, server_ip
++            tc_pri_ip = cmd_to_run_tc[3]  # tunnel client private IP    从指令中解析 ip
+             ts_pri_ip = cmd_to_run_tc[4]  # tunnel server private IP
+ 
+             if self.sender_side == self.server_side:
+-                send_pri_ip = ts_pri_ip
+-                recv_pri_ip = tc_pri_ip
+-            else:
+-                send_pri_ip = tc_pri_ip
+-                recv_pri_ip = ts_pri_ip
++                send_pri_ip = ts_pri_ip     # send 获取 server ip
++                recv_pri_ip = tc_pri_ip     # recv 获取 client ip
++            else:                           # sender 'remote', server 'local'
++                send_pri_ip = tc_pri_ip     # send 获取 client ip
++                recv_pri_ip = ts_pri_ip     # recv 获取 server ip
+ 
+             # run the side that runs first and get cmd to run the other side
+             second_cmd = self.run_first_side(
+-                tun_id, send_manager, recv_manager, send_pri_ip, recv_pri_ip)
+-            second_cmds.append(second_cmd)
++                tun_id, send_manager, recv_manager, send_pri_ip, recv_pri_ip)       # 'tunnel 1 python src/wrappers/bbr.py sender 100.64.0.3 40539\n'
++            second_cmds.append(second_cmd)              # 将指令存储在 second_cmds
+ 
+         # run the side that runs second
+-        if not self.run_second_side(send_manager, recv_manager, second_cmds):
++        if not self.run_second_side(send_manager, recv_manager, second_cmds):       # 启动第二条指令 (client)
+             return False
+ 
+         # stop all the running flows and quit tunnel managers
+-        ts_manager.stdin.write(b'halt\n')
++        ts_manager.stdin.write(b'halt\n')               # 结束, 终止 ts_manager
+         ts_manager.stdin.flush()
+-        tc_manager.stdin.write(b'halt\n')
++        tc_manager.stdin.write(b'halt\n')               # 结束, 终止 tc_manager
+         tc_manager.stdin.flush()
+ 
+         # process tunnel logs
+@@ -645,7 +663,7 @@ class Test(object):
+                     ack_i_ofst = self.local_ofst
+ 
+         merge_tunnel_logs = path.join(context.src_dir, 'experiments',
+-                                      'merge_tunnel_logs.py')
++                                      'merge_tunnel_logs.py')               # src/experiments/merge_tunnel_logs.py
+ 
+         for tun_id in range(1, self.flows + 1):
+             if self.mode == 'remote':
+@@ -663,6 +681,14 @@ class Test(object):
+                    '-i', self.datalink_ingress_logs[tun_id],
+                    '-e', self.datalink_egress_logs[tun_id],
+                    '-o', datalink_tun_log]
++            # 0: '/home/zhangbochun/pantheon-3/src/experiments/merge_tunnel_logs.py'
++            # 1: 'single'
++            # 2: '-i'
++            # 3: '/home/zhangbochun/pantheon-3/tmp/bbr_datalink_run1_flow1_uid11c75579-230b-4dbf-92fb-1f7c721017ba.log.ingress'
++            # 4: '-e'
++            # 5: '/home/zhangbochun/pantheon-3/tmp/bbr_datalink_run1_flow1_uid11c75579-230b-4dbf-92fb-1f7c721017ba.log.egress'
++            # 6: '-o' 
++            # 7: '/home/zhangbochun/pantheon-3/tmp/bbr_datalink_run1_flow1_uide3b84536-eafb-476c-a3f0-392db663c900.log.merged'
+             if apply_ofst:
+                 cmd += ['-i-clock-offset', data_i_ofst,
+                         '-e-clock-offset', data_e_ofst]
+@@ -737,14 +763,14 @@ class Test(object):
+     # run congestion control test
+     def run(self):
+         msg = 'Testing scheme %s for experiment run %d/%d...' % (
+-            self.cc, self.run_id, self.run_times)
+-        sys.stderr.write(msg + '\n')
++            self.cc, self.run_id, self.run_times)       # Testing scheme bbr for experiment run 1/1...
++        sys.stderr.write(msg + '\n')                    # 开始测试
+ 
+         # setup before running tests
+         self.setup()
+ 
+         # run receiver and sender
+-        if not self.run_congestion_control():
++        if not self.run_congestion_control():           # 运行拥塞算法
+             sys.stderr.write('Error in testing scheme %s with run ID %d\n' %
+                              (self.cc, self.run_id))
+             return
+@@ -758,46 +784,45 @@ class Test(object):
+ def run_tests(args):
+     # check and get git summary
+     git_summary = utils.get_git_summary(args.mode,
+-                                        getattr(args, 'remote_path', None))
++                                        getattr(args, 'remote_path', None))     # 获取本地的 git 信息
+ 
+     # get cc_schemes
+-    if args.all:
++    if args.all:                                            # 测试全部算法
+         config = utils.parse_config()
+-        schemes_config = config['schemes']
++        schemes_config = config['schemes']                  # 获取需要测试的算法
+ 
+-        cc_schemes = schemes_config.keys()
++        cc_schemes = schemes_config.keys()                  # 从中获取 key, 也就是算法名称的集合
+         if args.random_order:
+-            random.shuffle(cc_schemes)
+-    elif args.schemes is not None:
+-        cc_schemes = args.schemes.split()
++            random.shuffle(cc_schemes)                      # 如果设置了随机顺序, 就打乱算法
++    elif args.schemes is not None:                          # 没有设置 --all, 但设置了 --schemes "cubic bbr indigo"
++        cc_schemes = args.schemes.split()                   # 分割得到算法列表 ["cubic", "bbr", "indigo"]
+         if args.random_order:
+-            random.shuffle(cc_schemes)
++            random.shuffle(cc_schemes)                      # 如果设置了随机顺序, 就打乱算法顺序
+     else:
+-        assert(args.test_config is not None)
++        assert(args.test_config is not None)                # 没有设置 --all 和 --schemes, 根据 --test_config 读取被测算法
+         if args.random_order:
+             random.shuffle(args.test_config['flows'])
+         cc_schemes = [flow['scheme'] for flow in args.test_config['flows']]
+         
+-    # 修改生成地址
+-    if(args.datapath is not ''):
++    if(args.datapath != ''):
+         args.data_dir = args.data_dir+'/'+args.datapath+'/'
+     if not os.path.exists(args.data_dir):
+         os.makedirs(args.data_dir)
+ 
+     # save metadata
+-    meta = vars(args).copy()
++    meta = vars(args).copy()                                # 转换为 {} 字典
+     meta['cc_schemes'] = sorted(cc_schemes)
+     meta['git_summary'] = git_summary
+ 
+-    metadata_path = path.join(args.data_dir, 'pantheon_metadata.json')
+-    utils.save_test_metadata(meta, metadata_path)
++    metadata_path = path.join(args.data_dir, 'pantheon_metadata.json')      # 存储 pantheon_metadata.json
++    utils.save_test_metadata(meta, metadata_path)                           # 将 meta data 保存在 pantheon_metadata.json
+ 
+     # run tests
+     for run_id in range(args.start_run_id,
+-                         args.start_run_id + args.run_times):
+-        if not hasattr(args, 'test_config') or args.test_config is None:
++                         args.start_run_id + args.run_times):               # 运行测试, 从测试 id 开始, 运行次数为 run_times
++        if not hasattr(args, 'test_config') or args.test_config is None:    # 没有配置 test_config
+             for cc in cc_schemes:
+-                Test(args, run_id, cc).run()
++                Test(args, run_id, cc).run()                                # 遍历待测量算法
+         else:
+             Test(args, run_id, None).run()
+ 
+@@ -820,10 +845,10 @@ def pkill(args):
+ 
+ 
+ def main():
+-    args = arg_parser.parse_test()
++    args = arg_parser.parse_test()                                      # 获取参数
+ 
+     try:
+-        run_tests(args)
++        run_tests(args)                                                 # 运行
+     except:  # intended to catch all exceptions
+         # dump traceback ahead in case pkill kills the program
+         sys.stderr.write(traceback.format_exc())
+@@ -838,3 +863,31 @@ def main():
+ 
+ if __name__ == '__main__':
+     main()
++    
++'''test.py 测试程序
++参数配置:
++    01. 使用 config 文件
++    02. 使用命令行参数, 其中命令行参数可覆盖 config 配置
++main:
++    01. main() -> arg_parser.parse_test() 解析参数存储在 args
++    02. run_tests(args) -> get_git_summary 获取本地 git 信息, 如使用 remote 测试, 则要求 local git 和 remote git 一致
++        解析待测试的 schemes, 并执行 shuffle
++    03. run_times 是测试运行的次数, 遍历 [start_run_id, start_run_id + run_times], 执行 Test(args, run_id, cc)
++    04. Test.__init__(): 根据 remote/local 配置参数
++    05. Test.run() -> setup()-> local:  setup_mm_cmd(): wrappers, first/second command, set up mm-link command (prepend/mm-link/append/extra)
++                                remote: ssh_cmd
++    06. Test.run_congestion_control() -> run_with_tunnel()
++    07. run_tunnel_managers(): 子进程调用 tunnel_manager.py, 分别是 tunnel server manager (tsm) 和 tunnel client manager (tcm) 
++            local mode: tcm 和 tsm 均运行在本地, 调用 tsm 和 tcm 只需要 python tunnel_manager.py 即可
++            tunnel_manager 接受三种命令: prompt (设置提示语) / tunnel id (操作指定 id 的 mm-link) / halt (关闭全部 mm-link)
++        创建 manager 进程, 等待 manager 输出 tunnel manager is running, 输入 'prompt [tsm]' 设置 manager 为 tsm
++        创建 manager 进程, 等待 manager 输出 tunnel manager is running, 输入 'prompt [tcm]' 设置 manager 为 tcm
++        返回两个进程的描述符
++    08. run_with_tunnel(): local mode: sender->tcm, receiver->tsm, 先运行 receiver 再运行 sender
++        run n flows, 对于每个流, 运行 run_tunnel_server 并分配一个独特的 tun_id
++            -> run_tunnel_server(): 向 tsm 发送 tunnel tun_id mm-tunnelserver ..., 
++                                    然后读取 tunnel tun_id readline 得到 mm-tunnelclient 命令
++            -> run_tunnel_client(): 调用 run_tunnel_server() 返回的指令, 启动 mm-tunnelclient, 至此 mahimahi 隧道建立完毕 
++    09. run_first_side():  运行 first side, 对于本地 bbr 测试, 就是先启动 iperf server, 并返回启动 second_side 的指令 (存储在list依次调用)
++        run_second_side(): 遍历 list, 依次启动 bbr client, 也就是 iperf client.
++'''
+diff --git a/src/experiments/tunnel_manager.py b/src/experiments/tunnel_manager.py
+index b1a6ee9..9cfeac5 100755
+--- a/src/experiments/tunnel_manager.py
++++ b/src/experiments/tunnel_manager.py
+@@ -17,19 +17,28 @@ def main():
+     # register SIGINT and SIGTERM events to clean up gracefully before quit
+     def stop_signal_handler(signum, frame):
+         for tun_id in procs:
+-            utils.kill_proc_group(procs[tun_id])
++            utils.kill_proc_group(procs[tun_id])                    # 关闭全部 tunnel
+ 
+         sys.exit('tunnel_manager: caught signal %s and cleaned up\n' % signum)
+ 
+-    signal.signal(signal.SIGINT, stop_signal_handler)
+-    signal.signal(signal.SIGTERM, stop_signal_handler)
++    signal.signal(signal.SIGINT, stop_signal_handler)               # SIGTERM 关闭程序信号
++    signal.signal(signal.SIGTERM, stop_signal_handler)              # 接收 ctrl+c 信号
+ 
+-    sys.stdout.write('tunnel manager is running\n')
++    sys.stdout.write('tunnel manager is running\n')                 # 正在运行 tunnel
+     sys.stdout.flush()
+ 
+ 
+     while True:
+-        input_cmd = sys.stdin.readline().strip()
++        input_cmd = sys.stdin.readline().strip()                    
++        # command 1. prompt    [len = 2]        打印提示信息
++        #            usage:   'prompt tsm\n'    打印 [tsm]
++        # command 2. tunnel id [len > 2]        与 tunnel 相关的指令, 其中 id 是 tunnel 的编号, 启动的 tunnel 进程存储在 procs[id]
++        #         2.1   tunnel id mm-tunnelclient ...   启动 mm-tunnel client
++        #         2.2   tunnel id mm-tunnelserver ...   启动 mm-tunnel server
++        #         2.3   tunnel id python ...    在 mm-tunnel 进程内执行 python 脚本, 将 cmd 传入进程 procs[id] 执行
++        #         2.3.1 tunnel id python src/wrappers/bbr.py receiver       启动 bbr 的 receiver
++        #         2.4   tunnel id readline      从 procs[id] 中读取一行, 然后输入自己的标准输出, tunnel_manager 的创建者就可以读取 procs[id] 的输出了
++        # command 3. halt      [len = 1]        挂起, 将全部 procs[id] 进程终止
+ 
+         # print all the commands fed into tunnel manager
+         if prompt:
+@@ -44,7 +53,7 @@ def main():
+                 continue
+ 
+             try:
+-                tun_id = int(cmd[1])
++                tun_id = int(cmd[1])                    # 第二个参数是 tun_id
+             except ValueError:
+                 sys.stderr.write('error: usage: tunnel ID CMD...\n')
+                 continue
+@@ -66,7 +75,7 @@ def main():
+                 # cmd_to_run[0] = 'mm-delay 30 '+ cmd_to_run[0]
+                 # tun_id fd
+                 procs[tun_id] = Popen(cmd_to_run, stdin=PIPE,
+-                                      stdout=PIPE, preexec_fn=os.setsid)
++                                      stdout=PIPE, preexec_fn=os.setsid)        # 开启子进程
+             elif cmd[2] == 'python':  # run python scripts inside tunnel
+                 if tun_id not in procs:
+                     sys.stderr.write(
+@@ -74,7 +83,7 @@ def main():
+ 
+                 procs[tun_id].stdin.write((cmd_to_run + '\n').encode('utf-8'))
+                 procs[tun_id].stdin.flush()
+-            elif cmd[2] == 'readline':  # readline from stdout of tunnel 
++            elif cmd[2] == 'readline':  # readline from stdout of tunnel        # 从 tunnel 的标准输出读取一行数据
+                 if len(cmd) != 3:
+                     sys.stderr.write('error: usage: tunnel ID readline\n')
+                     continue
+@@ -83,7 +92,6 @@ def main():
+                     sys.stderr.write(
+                         'error: run tunnel client or server first\n')
+ 
+-                # 给出了ip地址 mm-runnelclient和mm-tunnelserver应该是pantheon自身创建的
+                 sys.stdout.write(procs[tun_id].stdout.readline().decode('utf-8'))
+                 sys.stdout.flush()
+             else:
+@@ -96,13 +104,13 @@ def main():
+                 continue
+ 
+             prompt = cmd[1].strip()
+-        elif cmd[0] == 'halt':  # terminate all tunnel processes and quit
++        elif cmd[0] == 'halt':  # terminate all tunnel processes and quit   挂起
+             if len(cmd) != 1:
+                 sys.stderr.write('error: usage: halt\n')
+                 continue
+ 
+             for tun_id in procs:
+-                utils.kill_proc_group(procs[tun_id])
++                utils.kill_proc_group(procs[tun_id])                # 杀掉全部 tunnel 进程
+ 
+             sys.exit(0)
+         else:
+diff --git a/src/helpers/context.py b/src/helpers/context.py
+index c38b61b..9b4beb0 100755
+--- a/src/helpers/context.py
++++ b/src/helpers/context.py
+@@ -1,6 +1,6 @@
+ import os
+ from os import path
+ import sys
+-src_dir = path.abspath(path.join(path.dirname(__file__), os.pardir))
++src_dir = path.abspath(path.join(path.dirname(__file__), os.pardir))        # 记录上下文, ~/pantheon
+ base_dir = path.abspath(path.join(src_dir, os.pardir))
+ sys.path.append(src_dir)
+diff --git a/src/helpers/utils.py b/src/helpers/utils.py
+index 3734603..97523b5 100755
+--- a/src/helpers/utils.py
++++ b/src/helpers/utils.py
+@@ -14,13 +14,13 @@ from .subprocess_wrappers import check_call, check_output, call
+ 
+ 
+ def get_open_port():
+-    sock = socket.socket(socket.AF_INET)
+-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++    sock = socket.socket(socket.AF_INET)                            # 使用 IPv4 进行通信
++    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)      # SO_REUSEADDR 表示允许重用地址
+ 
+-    sock.bind(('', 0))
+-    port = sock.getsockname()[1]
+-    sock.close()
+-    return str(port)
++    sock.bind(('', 0))                  # '': 使用任意可用的本地地址; 0: 使用系统分配的任意可用端口
++    port = sock.getsockname()[1]        # 从中提取出端口号
++    sock.close()                        # 关闭 sock
++    return str(port)                    # 只为获取可用端口
+ 
+ 
+ def make_sure_dir_exists(d):
+@@ -35,17 +35,17 @@ tmp_dir = path.join(base_dir, 'tmp')
+ make_sure_dir_exists(tmp_dir)
+ 
+ # 定义配置文件存放位置
+-conf_dir = path.join(src_dir,'experiments','config')
+-make_sure_dir_exists(conf_dir)
++conf_dir = path.join(src_dir,'experiments','config')            # ~/pantheon/src/experiments/config
++make_sure_dir_exists(conf_dir)                                  # 确认路径存在
+ 
+ def parse_config():
+     with open(path.join(src_dir, 'config.yml')) as config:
+-        return yaml.load(config,Loader=yaml.FullLoader)
++        return yaml.load(config,Loader=yaml.FullLoader)         # 加载 ~/pantheon/src/config.yml
+ 
+ 
+ def update_submodules():
+-    cmd = 'git submodule update --init --recursive'
+-    check_call(cmd, shell=True)
++    cmd = 'git submodule update --init --recursive'             # --init 初始化子模块 | --recursive 递归检查子模块是否包含子模块
++    check_call(cmd, shell=True)                                 # 更新子模块
+ 
+ 
+ class TimeoutError(Exception):
+@@ -107,7 +107,7 @@ def verify_schemes_with_meta(schemes, meta):
+ def who_runs_first(cc):
+     cc_src = path.join(src_dir, 'wrappers', cc + '.py')
+ 
+-    cmd = [cc_src, 'run_first']
++    cmd = [cc_src, 'run_first']                                         # 调用 wrappers, 传入参数为 run_first
+     run_first = check_output(cmd).strip().decode('utf-8')
+ 
+     if run_first == 'receiver':
+@@ -120,19 +120,19 @@ def who_runs_first(cc):
+     return run_first, run_second
+ 
+ 
+-def parse_remote_path(remote_path, cc=None):
+-    ret = {}
++def parse_remote_path(remote_path, cc=None):                    # 解析远程的路径
++    ret = {}                                                            # e.g. zhang@10.103.11.54:~/pantheon
+ 
+-    ret['host_addr'], ret['base_dir'] = remote_path.rsplit(':', 1)
+-    ret['src_dir'] = path.join(ret['base_dir'], 'src')
+-    ret['tmp_dir'] = path.join(ret['base_dir'], 'tmp')
+-    ret['ip'] = ret['host_addr'].split('@')[-1]
+-    ret['ssh_cmd'] = ['ssh', ret['host_addr']]
++    ret['host_addr'], ret['base_dir'] = remote_path.rsplit(':', 1)      # host_addr: zhang@10.103.11.54 和 base_dir: ~/pantheon [右侧分割, 最多分割成两部分]
++    ret['src_dir'] = path.join(ret['base_dir'], 'src')                  # src_dir: ~/pantheon/src
++    ret['tmp_dir'] = path.join(ret['base_dir'], 'tmp')                  # tmp_dir: ~/pantheon/tmp
++    ret['ip'] = ret['host_addr'].split('@')[-1]                         # ip: 10.103.11.54
++    ret['ssh_cmd'] = ['ssh', ret['host_addr']]                          # ssh_cmd: ['ssh', 'zhang@10.103.11.54']
+     ret['tunnel_manager'] = path.join(
+-        ret['src_dir'], 'experiments', 'tunnel_manager.py')
++        ret['src_dir'], 'experiments', 'tunnel_manager.py')             # tunnel_manager: ~/pantheon/src/experiments
+ 
+     if cc is not None:
+-        ret['cc_src'] = path.join(ret['src_dir'], 'wrappers', cc + '.py')
++        ret['cc_src'] = path.join(ret['src_dir'], 'wrappers', cc + '.py')       # cc_src: ~/pantheon/src/wrappers/cubic.py
+ 
+     return ret
+ 
+@@ -177,27 +177,27 @@ def query_clock_offset(ntp_addr, ssh_cmd):
+     return local_clock_offset, remote_clock_offset
+ 
+ 
+-def get_git_summary(mode='local', remote_path=None):
++def get_git_summary(mode='local', remote_path=None):                # 默认测试 local
+     git_summary_src = path.join(src_dir, 'experiments',
+                                 'git_summary.sh')
+-    local_git_summary = check_output(git_summary_src, cwd=base_dir)
++    local_git_summary = check_output(git_summary_src, cwd=base_dir)         # 调用 src/experiments/git_summary.sh, 打印子模块信息
+ 
+-    if mode == 'remote':
+-        r = parse_remote_path(remote_path)
++    if mode == 'remote':                                                    # 远程测试, 需要建立真实连接
++        r = parse_remote_path(remote_path)                                  # 解析路径
+ 
+         git_summary_src = path.join(
+-            r['src_dir'], 'experiments', 'git_summary.sh')
+-        ssh_cmd = 'cd %s; %s' % (r['base_dir'], git_summary_src)
+-        ssh_cmd = ' '.join(r['ssh_cmd']) + ' "%s"' % ssh_cmd
++            r['src_dir'], 'experiments', 'git_summary.sh')                  # ~/pantheon/src/experiments/git_summary.sh, 打印模块信息
++        ssh_cmd = 'cd %s; %s' % (r['base_dir'], git_summary_src)            # cd ~/pantheon; ~/pantheon/src/experiments/git_summary.sh
++        ssh_cmd = ' '.join(r['ssh_cmd']) + ' "%s"' % ssh_cmd                # ssh zhang@10.103.11.51 "cd ~/pantheon; ~/pantheon/src/experiments/git_summary.sh"
+ 
+-        remote_git_summary = check_output(ssh_cmd, shell=True)
++        remote_git_summary = check_output(ssh_cmd, shell=True)              # 执行命令, 指定 shell 运行, 获取远程子模块信息
+ 
+-        if local_git_summary != remote_git_summary:
+-            sys.stderr.write(
++        if local_git_summary != remote_git_summary:                         # 对比远程子模块信息和本地子模块信息
++            sys.stderr.write(                                               # 不一致则打印信息
+                 '--- local git summary ---\n%s\n' % local_git_summary)
+             sys.stderr.write(
+                 '--- remote git summary ---\n%s\n' % remote_git_summary)
+-            sys.exit('Repository differed between local and remote sides')
++            sys.exit('Repository differed between local and remote sides')  # 退出
+ 
+     return local_git_summary
+ 
+@@ -217,17 +217,17 @@ def save_test_metadata(meta, metadata_path):
+     meta.pop('all')
+     meta.pop('schemes')
+     meta.pop('data_dir')
+-    meta.pop('pkill_cleanup')
++    meta.pop('pkill_cleanup')               # 从字典中去掉这几个索引
+ 
+     # use list in case meta.keys() returns an iterator in Python 3
+-    for key in list(meta.keys()):
+-        if meta[key] is None:
++    for key in list(meta.keys()):           # 遍历 meta 的 key
++        if meta[key] is None:               # 去掉空的 key
+             meta.pop(key)
+ 
+     if 'uplink_trace' in meta:
+-        meta['uplink_trace'] = path.basename(meta['uplink_trace'])
++        meta['uplink_trace'] = path.basename(meta['uplink_trace'])              # 默认 'src/experiments/12mbps.trace'
+     if 'downlink_trace' in meta:
+-        meta['downlink_trace'] = path.basename(meta['downlink_trace'])
++        meta['downlink_trace'] = path.basename(meta['downlink_trace'])          # 默认 'src/experiments/12mbps.trace'
+ 
+     with open(metadata_path, 'w') as metadata_fh:
+         json.dump(decode_dict(meta), metadata_fh, sort_keys=True, indent=4,
+diff --git a/src/wrappers/arg_parser.py b/src/wrappers/arg_parser.py
+index 1b61cad..ebc7b38 100755
+--- a/src/wrappers/arg_parser.py
++++ b/src/wrappers/arg_parser.py
+@@ -44,8 +44,8 @@ def parse_wrapper_args(run_first):
+ 
+ 
+ def receiver_first():
+-    return parse_wrapper_args('receiver')
++    return parse_wrapper_args('receiver')           # 先启动 receiver
+ 
+ 
+ def sender_first():
+-    return parse_wrapper_args('sender')
++    return parse_wrapper_args('sender')             # 先启动 sender
+diff --git a/src/wrappers/bbr.py b/src/wrappers/bbr.py
+index 4feee7c..7ba21a1 100755
+--- a/src/wrappers/bbr.py
++++ b/src/wrappers/bbr.py
+@@ -20,7 +20,7 @@ def setup_bbr():
+ 
+ 
+ def main():
+-    args = arg_parser.receiver_first()
++    args = arg_parser.receiver_first()          # 先启动 receiver, 这里直接输出, 调用的程序会通过管道获取输出值
+ 
+     if args.option == 'deps':
+         print('iperf')
+@@ -30,12 +30,12 @@ def main():
+         setup_bbr()
+         return
+ 
+-    if args.option == 'receiver':
++    if args.option == 'receiver':               # iperf -Z bbr, -s 作为 server, -p port
+         cmd = ['iperf', '-Z', 'bbr', '-s', '-p', args.port]
+         check_call(cmd)
+         return
+ 
+-    if args.option == 'sender':
++    if args.option == 'sender':                 # iperf -Z bbr 使用 bbr, -c ip 作为 client, 绑定 ip, -p port, -t 运行时间
+         cmd = ['iperf', '-Z', 'bbr', '-c', args.ip, '-p', args.port,
+                '-t', '75']
+         check_call(cmd)

@@ -1,8 +1,19 @@
 {
     "git.ignoreLimitWarning": true,
-    "terminal.integrated.automationProfile.linux": {
-        "path": "/bin/bash",
-    },
     "python.analysis.inlayHints.functionReturnTypes": true,
     "cmake.sourceDirectory": "/home/zhangbochun/pantheon-3/third_party/proto-quic/src/third_party/boringssl/src/crypto/buf",
+    // "terminal.integrated.shellIntegration.suggestEnabled": true,
+    // "terminal.integrated.shellIntegration.enabled": true,
+    // "terminal.integrated.profiles.linux": {
+    //     "bash": {
+    //         "path": "/bin/bash",
+    //         "icon": "terminal-bash",
+    //         "args": ["-c", "sshpass -p 680217 ssh zhangbochun@localhost"],
+    //     },
+    // },
+    // "terminal.integrated.automationProfile.linux": {
+    //     "path": "/bin/sh",
+    //     "args": ["-c", "echo hello~~"]
+    // },
+
 }

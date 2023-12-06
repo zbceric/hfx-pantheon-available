@@ -1,0 +1,11 @@
+// {
+//     "version": "2.0.0",
+//     "tasks": [
+//         {
+//             "label": "ssh",
+//             "type": "shell",
+//             "command": "sshpass -p 680217 ssh zhangbochun@10.103.11.54",
+//             "isBackground": false
+//         }
+//     ]
+// }
