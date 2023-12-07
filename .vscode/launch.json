@@ -44,5 +44,18 @@
             ],
             "console": "integratedTerminal",            // 默认值, 新建一个终端
         },
+
+        {
+            "name": "Python: test.py bbr cubic",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/experiments/test.py",
+            "args": [
+                "local",
+                "--schemes",
+                "copa",
+            ],
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
     ]
 }

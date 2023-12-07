@@ -1,0 +1,1743 @@
+diff --git a/automatic-tests.py b/automatic-tests.py
+index 5416874..1766e3c 100644
+--- a/automatic-tests.py
++++ b/automatic-tests.py
+@@ -53,7 +53,7 @@ def run_test(cctype, rat_id, delta, num_senders, num_kernels, cmd_line_args):
+              + ' ' + cmd_line_args.server_ip + ' ' + serverport + ' ' + cctype \
+              + ' ' + in_filename + ' ' + str(delta) + ' '+ str(num_senders) \
+              + ' ' + linkppt + ' ' + str(num_kernels) + ' ' + out_filename
+-    print runstr
++    print(runstr)
+     os.system(runstr)
+     
+     time.sleep(5) # wait for queues to clear
+@@ -73,7 +73,7 @@ if __name__ == '__main__':
+     while True:
+         x = random.randrange(len(rat_names)+len(deltas)+1)
+         rat_id, delta = 0, 0.0
+-        print "Running only Kernel" + str(x)
++        print("Running only Kernel") + str(x)
+         if x < len(deltas): # everybody has equal probability
+             cctype = 'nash'
+             delta = deltas[random.randrange(len(deltas))]
+@@ -87,6 +87,6 @@ if __name__ == '__main__':
+         num_senders = num_senders_list[ random.randrange(len(num_senders_list)) ]
+         num_kernels = num_kernels_list[ random.randrange(len(num_kernels_list)) ]
+ 
+-        print "Running '" + cctype + "' with " + str(num_senders) + " senders" + (" with '" + rat_names[rat_id] + "'", "")[cctype != 'remy'] + (" with delta=" + str(delta), "")[cctype != 'nash']
++        print("Running '" + cctype + "' with " + str(num_senders) + " senders" + (" with '" + rat_names[rat_id] + "'", "")[cctype != 'remy'] + (" with delta=" + str(delta), "")[cctype != 'nash'])
+ 
+         run_test(cctype, rat_id, delta, num_senders, num_kernels, cmd_line_args)
+diff --git a/automatic-tests_vary-mahimahi-configs.py b/automatic-tests_vary-mahimahi-configs.py
+index d4deb4b..7c1e149 100644
+--- a/automatic-tests_vary-mahimahi-configs.py
++++ b/automatic-tests_vary-mahimahi-configs.py
+@@ -62,6 +62,7 @@ def single_remysim_run(
+ 	linkrate,
+ 	numsenders,
+ 	ratname,
++	cctype,
+ 	output_directory):
+ 	assert(type(minrtt) is float) # in ms
+ 	assert(type(linkrate) is float) # in MBps
+@@ -100,7 +101,7 @@ def conduct_expt(args):
+ 		else:
+ 			linkrate = args.linkrate
+ 			rtt = args.lower + resolution*i
+-		print "Running for " + str(linkrate) + " MBps " + str(rtt) + " ms"
++		print("Running for " + str(linkrate) + " MBps " + str(rtt) + " ms")
+ 		if args.expt_type == 'mahimahi':
+ 			single_mahimahi_run(
+ 				rtt, 
+@@ -118,7 +119,8 @@ def conduct_expt(args):
+ 				rtt, 
+ 				linkrate, 
+ 				args.num_senders, 
+-				args.ratname, 
++				args.ratname,
++				args.cctype,
+ 				args.output_directory
+ 			)
+ 		else:
+diff --git a/makefile b/makefile
+index 8278e7b..ab2d70b 100644
+--- a/makefile
++++ b/makefile
+@@ -1,16 +1,25 @@
+-pMEMORY_STYLE := ./protobufs-default
++pMEMORY_STYLE := ./protobufs-default			# 存储位置
+ 
+-CXX := g++
+-CXXFLAGS := -DHAVE_CONFIG_H -std=c++11 -pthread -pedantic -Wall -Wextra -Weffc++ -Werror -fno-default-inline -g -O2 -fPIC
+-INCLUDES :=	-I./protobufs-default -I./udt
++CXX := g++		# 指定 g++ 编译器
++CXXFLAGS := -DHAVE_CONFIG_H -std=c++11 -pthread -pedantic -Wall -Wextra -Weffc++ -Werror -fno-default-inline -g -O2 -fPIC	# 编译选项
++INCLUDES :=	-I./protobufs-default -I./udt		# 头文件搜索路径
+ 
+-LIBS     := -ljemalloc -lm -pthread -lprotobuf -lpthread -ljemalloc
++LIBS     := -ljemalloc -lm -pthread -lprotobuf -lpthread -ljemalloc		# 库文件
+ #$(MEMORY_STYLE)/libremyprotos.a
+-OBJECTS  := random.o memory.o memoryrange.o rat.o whisker.o whiskertree.o udp-socket.o traffic-generator.o remycc.o markoviancc.o estimators.o rtt-window.o #protobufs-default/dna.pb.o
++OBJECTS  := random.o memory.o memoryrange.o rat.o whisker.o whiskertree.o udp-socket.o traffic-generator.o remycc.o markoviancc.o estimators.o rtt-window.o #protobufs-default/dna.pb.o # 目标文件列表
+ 
+-all: sender receiver pygenericcc.so
++# PYTHON  := -I/usr/include/python2.7
++PYTHON  := -I/home/zhangbochun/anaconda3/envs/pantheon-3.7/include/python3.7m
+ 
+-.PHONY: all
++# LIB_PYTHON := -lpython2.7
++# LIB_PYTHON	:= /home/zhangbochun/anaconda3/envs/pantheon-3.7/lib/libpython3.7m.so
++
++# BOOST_PYTHON := -lboost_python
++# BOOST_PYTHON := /home/zhangbochun/tools/boost_1_83_0/stage/lib/libboost_python37.so
++
++all: sender receiver pygenericcc.so				# 伪目标, 方便执行多个任务的指令
++
++.PHONY: all										# 避免同名文件冲突
+ 
+ protobufs-default/dna.pb.cc: protobufs-default/dna.proto
+ 	protoc --cpp_out=. protobufs-default/dna.proto
+@@ -28,13 +37,13 @@ receiver: receiver.o udp-socket.o
+ 	$(CXX) $(inputs) -o $(output) $(LIBS)
+ 
+ python-wrapper.o: python-wrapper.cc
+-	g++ -I/usr/include/python2.7 $(INCLUDES) -fPIC $(CXXFLAGS) -c python-wrapper.cc -o python-wrapper.o
++	g++ $(PYTHON) $(INCLUDES) -fPIC $(CXXFLAGS) -c python-wrapper.cc -o python-wrapper.o
+ 
+-%.o: %.cc
++%.o: %.cc		# 通配符编译
+ 	$(CXX) $(INCLUDES) $(CXXFLAGS) -c $(input) -o $(output)
+ 
+ pygenericcc.so:
+-  $(CXX) -shared -Wl,--export-dynamic -Wl,--no-undefined python-wrapper.o $(OBJECTS) protobufs-default/dna.pb.o -o pygenericcc.so -lpython2.7 -lboost_python $(LIBS)
++  $(CXX) -shared -Wl,--export-dynamic -Wl,--no-undefined python-wrapper.o $(OBJECTS) protobufs-default/dna.pb.o -o pygenericcc.so /home/zhangbochun/anaconda3/envs/pantheon-3.7/lib/libpython3.7m.so /home/zhangbochun/tools/boost_1_83_0/stage/lib/libboost_python37.so $(LIBS)
+ 
+ pcc-tcp.o: pcc-tcp.cc
+ 	 g++ -DHAVE_CONFIG_H -I. -I./udt -std=c++11 -pthread         -fno-default-inline -g -O2 -MT pcc-tcp.o -MD -MP -c -o pcc-tcp.o pcc-tcp.cc 
+diff --git a/markoviancc.cc b/markoviancc.cc
+index 97d9b04..183d1f3 100644
+--- a/markoviancc.cc
++++ b/markoviancc.cc
+@@ -12,386 +12,459 @@ using namespace std;
+ 
+ int MarkovianCC::flow_id_counter = 0;
+ 
+-double MarkovianCC::current_timestamp( void ){
+-  return cur_tick;
++double MarkovianCC::current_timestamp(void)
++{
++    return cur_tick;
+ }
+ 
+-void MarkovianCC::init() {
+-  if (num_pkts_acked != 0) {
+-    cout << "% Packets Lost: " << (100.0 * num_pkts_lost) /
+-      (num_pkts_acked + num_pkts_lost) << " at " << current_timestamp() << " " << num_pkts_acked << " " << num_pkts_sent << " min_rtt= " << min_rtt << " " << num_pkts_acked << " " << num_pkts_lost << endl;
+-    if (slow_start)
+-      cout << "Finished while in slow-start at window " << _the_window << endl;
+-  }
+-
+-  _intersend_time = 0;
+-  _the_window = num_probe_pkts;
+-  if (external_min_rtt != 0)
+-    _intersend_time = external_min_rtt / _the_window;
+-  if (keep_ext_min_rtt)
+-    min_rtt = external_min_rtt;
+-  else
+-    min_rtt = numeric_limits<double>::max();
+-  _timeout = 1000;
+-  
+-  if (utility_mode != CONSTANT_DELTA)
+-    delta = 1;
+-  
+-  unacknowledged_packets.clear();
+-
+-  rtt_unacked.reset();
+-  rtt_window.clear();
+-  prev_intersend_time = 0;
+-  cur_intersend_time = 0;
+-  interarrival.reset();
+-  is_uniform.reset();
+-
+-  
+-  last_update_time = 0;
+-  update_dir = 1;
+-  prev_update_dir = 1;
+-  pkts_per_rtt = 0;
+-  update_amt = 1;
+-  
+-  intersend_time_vel = 0;
+-  prev_intersend_time_vel = 0;
+-  prev_rtt = 0;
+-  prev_rtt_update_time = 0;
+-  prev_avg_sending_rate = 0;
+-
+-  num_pkts_acked = num_pkts_lost = num_pkts_sent = 0;
+-  operation_mode = DEFAULT_MODE;
+-  flow_length = 0;
+-  prev_delta_update_time = 0;
+-  prev_delta_update_time_loss = 0;
+-  max_queuing_delay_estimate = 0;
+-
+-  loss_rate.reset();
+-  reduce_on_loss.reset();
+-  loss_in_last_rtt = false;
+-  interarrival_ewma.reset();
+-  prev_ack_time = 0.0;
+-  exp_increment = 1.0;
+-  prev_delta.reset();
+-  slow_start = true;
+-  slow_start_threshold = 1e10;
++void MarkovianCC::init()
++{
++    if (num_pkts_acked != 0)
++    {
++        cout << "% Packets Lost: "
++             << (100.0 * num_pkts_lost) / (num_pkts_acked + num_pkts_lost)
++             << " at " << current_timestamp() << " " << num_pkts_acked << " "
++             << num_pkts_sent << " min_rtt= " << min_rtt << " "
++             << num_pkts_acked << " " << num_pkts_lost << endl;
++        if (slow_start)
++            cout << "Finished while in slow-start at window " << _the_window
++                 << endl;
++    }
++
++    _intersend_time = 0;
++    _the_window     = num_probe_pkts;
++    if (external_min_rtt != 0)
++        _intersend_time = external_min_rtt / _the_window;
++    if (keep_ext_min_rtt)
++        min_rtt = external_min_rtt;
++    else
++        min_rtt = numeric_limits<double>::max();
++    _timeout = 1000;
++
++    if (utility_mode != CONSTANT_DELTA)
++        delta = 1;
++
++    unacknowledged_packets.clear();
++
++    rtt_unacked.reset();
++    rtt_window.clear();
++    prev_intersend_time = 0;
++    cur_intersend_time  = 0;
++    interarrival.reset();
++    is_uniform.reset();
++
++    last_update_time = 0;
++    update_dir       = 1;
++    prev_update_dir  = 1;
++    pkts_per_rtt     = 0;
++    update_amt       = 1;
++
++    intersend_time_vel      = 0;
++    prev_intersend_time_vel = 0;
++    prev_rtt                = 0;
++    prev_rtt_update_time    = 0;
++    prev_avg_sending_rate   = 0;
++
++    num_pkts_acked = num_pkts_lost = num_pkts_sent = 0;
++    operation_mode                                 = DEFAULT_MODE;
++    flow_length                                    = 0;
++    prev_delta_update_time                         = 0;
++    prev_delta_update_time_loss                    = 0;
++    max_queuing_delay_estimate                     = 0;
++
++    loss_rate.reset();
++    reduce_on_loss.reset();
++    loss_in_last_rtt = false;
++    interarrival_ewma.reset();
++    prev_ack_time = 0.0;
++    exp_increment = 1.0;
++    prev_delta.reset();
++    slow_start           = true;
++    slow_start_threshold = 1e10;
+ }
+ 
+-void MarkovianCC::update_delta(bool pkt_lost __attribute((unused)), double cur_rtt) {
+-  double cur_time = current_timestamp();
+-  if (utility_mode == AUTO_MODE) {
+-    if (pkt_lost) {
+-      is_uniform.update(rtt_window.get_unjittered_rtt());
+-      //cout << "Packet lost: " << cur_time << endl;
+-    }
+-    if (!rtt_window.is_copa()) {
+-      operation_mode = LOSS_SENSITIVE_MODE;
+-    }
+-    else {
+-      operation_mode = DEFAULT_MODE;
+-    }
+-  }
+-
+-  if (operation_mode == DEFAULT_MODE && utility_mode != TCP_COOP) {
+-    if (prev_delta_update_time == 0. || prev_delta_update_time_loss + cur_rtt < cur_time) {
+-      if (delta < default_delta)
+-        delta = default_delta; //1. / (1. / delta - 1.);
+-      delta = min(delta, default_delta);
+-      prev_delta_update_time = cur_time;
++void MarkovianCC::update_delta(bool   pkt_lost __attribute((unused)),
++                               double cur_rtt)
++{
++    double cur_time = current_timestamp();
++    if (utility_mode == AUTO_MODE)
++    {
++        if (pkt_lost)
++        {
++            is_uniform.update(rtt_window.get_unjittered_rtt());
++            // cout << "Packet lost: " << cur_time << endl;
++        }
++        if (!rtt_window.is_copa())
++        {
++            operation_mode = LOSS_SENSITIVE_MODE;
++        }
++        else
++        {
++            operation_mode = DEFAULT_MODE;
++        }
+     }
+-  }
+-  else if (utility_mode == TCP_COOP || operation_mode == LOSS_SENSITIVE_MODE) {
+-    if (prev_delta_update_time == 0)
+-      delta = default_delta;
+-    if (pkt_lost && prev_delta_update_time_loss + cur_rtt < cur_time) {
+-      delta *= 2;
+-      // double decrease = 0.5 * _the_window * rtt_window.get_min_rtt() / (rtt_window.get_unjittered_rtt());
+-      // if (decrease >= 1. / (2. * delta))
+-      // 	delta = default_delta;
+-      // else
+-      // 	delta = 1. / (1. / (2. * delta) - decrease);
+-      prev_delta_update_time_loss = cur_time;
++
++    if (operation_mode == DEFAULT_MODE && utility_mode != TCP_COOP)
++    {
++        if (prev_delta_update_time == 0. ||
++            prev_delta_update_time_loss + cur_rtt < cur_time)
++        {
++            if (delta < default_delta)
++                delta = default_delta; // 1. / (1. / delta - 1.);
++            delta                  = min(delta, default_delta);
++            prev_delta_update_time = cur_time;
++        }
+     }
+-    else {
+-      if (prev_delta_update_time + cur_rtt < cur_time) {
+-        delta = 1. / (1. / delta + 1.);
+-        //cout << "DU " << cur_time << " " << flow_id << " " << delta << endl;
+-        prev_delta_update_time = cur_time;
+-      }
++    else if (utility_mode == TCP_COOP || operation_mode == LOSS_SENSITIVE_MODE)
++    {
++        if (prev_delta_update_time == 0)
++            delta = default_delta;
++        if (pkt_lost && prev_delta_update_time_loss + cur_rtt < cur_time)
++        {
++            delta *= 2;
++            // double decrease = 0.5 * _the_window * rtt_window.get_min_rtt() /
++            // (rtt_window.get_unjittered_rtt()); if (decrease >= 1. / (2. *
++            // delta)) 	delta = default_delta; else 	delta = 1. / (1. / (2. *
++            // delta) - decrease);
++            prev_delta_update_time_loss = cur_time;
++        }
++        else
++        {
++            if (prev_delta_update_time + cur_rtt < cur_time)
++            {
++                delta = 1. / (1. / delta + 1.);
++                // cout << "DU " << cur_time << " " << flow_id << " " << delta
++                // << endl;
++                prev_delta_update_time = cur_time;
++            }
++        }
++        delta = min(delta, default_delta);
+     }
+-    delta = min(delta, default_delta);
+-  }
+ }
+ 
+-double MarkovianCC::randomize_intersend(double intersend) {
+-  //return rand_gen.exponential(intersend);
+-  //return rand_gen.uniform(0.99*intersend, 1.01*intersend);
+-  return intersend;
++double MarkovianCC::randomize_intersend(double intersend)
++{
++    // return rand_gen.exponential(intersend);
++    // return rand_gen.uniform(0.99*intersend, 1.01*intersend);
++    return intersend;
+ }
+ 
+-
+-void MarkovianCC::update_intersend_time() {
+-  double cur_time __attribute((unused)) = current_timestamp();
+-  // if (external_min_rtt == 0) {
+-  //   cout << "External min. RTT estimate required." << endl;
+-  //   exit(1);
+-  // }
+-  
+-  // First two RTTs are for probing
+-  if (num_pkts_acked < 2 * num_probe_pkts - 1)
+-    return;
+-
+-  // Calculate useful quantities
+-  double rtt = rtt_window.get_unjittered_rtt();
+-  double queuing_delay = rtt - min_rtt;
+-
+-  double target_window;
+-  if (queuing_delay == 0)
+-    target_window = numeric_limits<double>::max();
+-  else
+-    target_window = rtt / (queuing_delay * delta);
+-
+-  // Handle start-up behavior
+-  if (slow_start) {
+-    if (do_slow_start || target_window == numeric_limits<double>::max()) {
+-      _the_window += 1;
+-      if (_the_window >= target_window)
+-        slow_start = false;
+-    }
+-    else {
+-      assert(false);
+-      // _the_window = rtt / ((min_rtt + rtt_window.get_max()) * 0.5 - min_rtt);
+-      // cout << "Fast Start: " << rtt_window.get_min() << " " << rtt_window.get_max() << " " << _the_window << endl;
+-      // slow_start = false;
+-    }
+-  }
+-  // Update the window
+-  else {
+-    if (last_update_time + rtt_window.get_latest_rtt() < cur_time) {
+-      if (prev_update_dir * update_dir > 0) {
+-        if (update_amt < 0.006)
+-          update_amt += 0.005;
++void MarkovianCC::update_intersend_time()
++{
++    double cur_time __attribute((unused)) = current_timestamp();
++    // if (external_min_rtt == 0) {
++    //   cout << "External min. RTT estimate required." << endl;
++    //   exit(1);
++    // }
++
++    // First two RTTs are for probing
++    if (num_pkts_acked < 2 * num_probe_pkts - 1)
++        return;
++
++    // Calculate useful quantities
++    double rtt           = rtt_window.get_unjittered_rtt();
++    double queuing_delay = rtt - min_rtt;
++
++    double target_window;
++    if (queuing_delay == 0)
++        target_window = numeric_limits<double>::max();
++    else
++        target_window = rtt / (queuing_delay * delta);
++
++    // Handle start-up behavior
++    if (slow_start)
++    {
++        if (do_slow_start || target_window == numeric_limits<double>::max())
++        {
++            _the_window += 1;
++            if (_the_window >= target_window)
++                slow_start = false;
++        }
+         else
+-          update_amt = (int)update_amt * 2;
+-      }
+-      else {
+-        update_amt = 1.;
+-        prev_update_dir *= -1;
+-      }
+-      last_update_time = cur_time;
+-      pkts_per_rtt = update_dir = 0;
+-    }
+-    if (update_amt > _the_window * delta) {
+-      update_amt /= 2;
+-    }
+-    update_amt = max(update_amt, 1.);
+-    ++ pkts_per_rtt;
+-
+-    if (_the_window < target_window) {
+-      ++ update_dir;
+-      _the_window += update_amt / (delta * _the_window);
++        {
++            assert(false);
++            // _the_window = rtt / ((min_rtt + rtt_window.get_max()) * 0.5 -
++            // min_rtt); cout << "Fast Start: " << rtt_window.get_min() << " "
++            // << rtt_window.get_max() << " " << _the_window << endl; slow_start
++            // = false;
++        }
+     }
+-    else {
+-      -- update_dir;
+-      _the_window -= update_amt / (delta * _the_window);
++    // Update the window
++    else
++    {
++        if (last_update_time + rtt_window.get_latest_rtt() < cur_time)
++        {
++            if (prev_update_dir * update_dir > 0)
++            {
++                if (update_amt < 0.006)
++                    update_amt += 0.005;
++                else
++                    update_amt = (int)update_amt * 2;
++            }
++            else
++            {
++                update_amt = 1.;
++                prev_update_dir *= -1;
++            }
++            last_update_time = cur_time;
++            pkts_per_rtt = update_dir = 0;
++        }
++        if (update_amt > _the_window * delta)
++        {
++            update_amt /= 2;
++        }
++        update_amt = max(update_amt, 1.);
++        ++pkts_per_rtt;
++
++        if (_the_window < target_window)
++        {
++            ++update_dir;
++            _the_window += update_amt / (delta * _the_window);
++        }
++        else
++        {
++            --update_dir;
++            _the_window -= update_amt / (delta * _the_window);
++        }
+     }
+-  }
+ 
+-  //cout << "time= " << cur_time << " window= " << _the_window << " target= " << target_window << " rtt= " << rtt << " min_rtt= " << min_rtt << " delta= " << delta << " update_amt= " << update_amt << endl;
+-  // Set intersend time and perform boundary checks.
+-  _the_window = max(2.0, _the_window);
+-  cur_intersend_time = 0.5 * rtt / _the_window;
+-  _intersend_time = randomize_intersend(cur_intersend_time);
++    // cout << "time= " << cur_time << " window= " << _the_window << " target= "
++    // << target_window << " rtt= " << rtt << " min_rtt= " << min_rtt << "
++    // delta=
++    // "
++    // << delta << " update_amt= " << update_amt << endl;
++    // Set intersend time and perform boundary checks.
++    _the_window        = max(2.0, _the_window);
++    cur_intersend_time = 0.5 * rtt / _the_window;
++    _intersend_time    = randomize_intersend(cur_intersend_time);
+ }
+ 
+-void MarkovianCC::onACK(int ack, 
+-			double receiver_timestamp __attribute((unused)),
+-			double sent_time, int delta_class __attribute((unused))) {
+-  int seq_num = ack - 1;
+-  double cur_time = current_timestamp();
+-  assert(cur_time > sent_time);
+-
+-  rtt_window.new_rtt_sample(cur_time - sent_time, cur_time);
+-  min_rtt = rtt_window.get_min_rtt(); //min(min_rtt, cur_time - sent_time);
+-  assert(rtt_window.get_unjittered_rtt() >= min_rtt);
+-
+-  // loss_rate = loss_rate * (1.0 - alpha_loss);
+-
+-  if (prev_ack_time != 0) {
+-    interarrival_ewma.update(cur_time - prev_ack_time, cur_time / min_rtt);
+-    interarrival.push(cur_time - prev_ack_time);
+-  }
+-  prev_ack_time = cur_time;
+-
+-  update_delta(false, cur_time - sent_time);
+-  update_intersend_time();
+-
+-  bool pkt_lost = false;
+-  bool reduce = false;
+-  if (unacknowledged_packets.count(seq_num) != 0) {
+-    int tmp_seq_num = -1;
+-    for (auto x : unacknowledged_packets) {
+-      assert(tmp_seq_num <= x.first);
+-      tmp_seq_num = x.first;
+-      if (x.first > seq_num)
+-        break;
+-      prev_intersend_time = x.second.intersend_time;
+-      prev_intersend_time_vel = x.second.intersend_time_vel;
+-      prev_rtt = x.second.rtt;
+-      prev_rtt_update_time = x.second.sent_time;
+-      prev_avg_sending_rate = x.second.prev_avg_sending_rate;
+-      if (x.first < seq_num) {
+-        ++ num_pkts_lost;
+-        pkt_lost = true;
+-        reduce |= reduce_on_loss.update(true, cur_time, rtt_window.get_latest_rtt());
+-      }
+-      unacknowledged_packets.erase(x.first);
++void MarkovianCC::onACK(int    ack,
++                        double receiver_timestamp __attribute((unused)),
++                        double sent_time, int delta_class __attribute((unused)))
++{
++    int    seq_num  = ack - 1;
++    double cur_time = current_timestamp();
++    assert(cur_time > sent_time);
++
++    rtt_window.new_rtt_sample(cur_time - sent_time, cur_time);
++    min_rtt = rtt_window.get_min_rtt(); // min(min_rtt, cur_time - sent_time);
++    assert(rtt_window.get_unjittered_rtt() >= min_rtt);
++
++    // loss_rate = loss_rate * (1.0 - alpha_loss);
++
++    if (prev_ack_time != 0)
++    {
++        interarrival_ewma.update(cur_time - prev_ack_time, cur_time / min_rtt);
++        interarrival.push(cur_time - prev_ack_time);
++    }
++    prev_ack_time = cur_time;
++
++    update_delta(false, cur_time - sent_time);
++    update_intersend_time();
++
++    bool pkt_lost = false;
++    bool reduce   = false;
++    if (unacknowledged_packets.count(seq_num) != 0)
++    {
++        int  tmp_seq_num = -1;
++        auto iter        = unacknowledged_packets.begin();
++        while (iter != unacknowledged_packets.end())
++        {
++            auto x = *iter;
++            assert(tmp_seq_num <= x.first);
++            tmp_seq_num = x.first;
++            if (x.first > seq_num)
++                break;
++            prev_intersend_time     = x.second.intersend_time;
++            prev_intersend_time_vel = x.second.intersend_time_vel;
++            prev_rtt                = x.second.rtt;
++            prev_rtt_update_time    = x.second.sent_time;
++            prev_avg_sending_rate   = x.second.prev_avg_sending_rate;
++            if (x.first < seq_num)
++            {
++                ++num_pkts_lost;
++                pkt_lost = true;
++                reduce |= reduce_on_loss.update(true, cur_time,
++                                                rtt_window.get_latest_rtt());
++            }
++            iter = unacknowledged_packets.erase(iter);
++        }
++    }
++    if (pkt_lost)
++    {
++        update_delta(true);
++        // cout << "LOST! --------------------" << endl;
++    }
++    reduce |=
++        reduce_on_loss.update(false, cur_time, rtt_window.get_latest_rtt());
++    if (reduce)
++    {
++        _the_window *= 0.7;
++        _the_window = max(2.0, _the_window);
++        cur_intersend_time =
++            0.5 * rtt_window.get_unjittered_rtt() / _the_window;
++        _intersend_time = randomize_intersend(cur_intersend_time);
+     }
+-  }
+-  if (pkt_lost) {
+-    update_delta(true);
+-    //cout << "LOST! --------------------" << endl;
+-  }
+-  reduce |= reduce_on_loss.update(false, cur_time, rtt_window.get_latest_rtt());
+-  if (reduce) {
+-    _the_window *= 0.7;
+-    _the_window = max(2.0, _the_window);
+-    cur_intersend_time = 0.5 * rtt_window.get_unjittered_rtt() / _the_window;
+-    _intersend_time = randomize_intersend(cur_intersend_time);
+-  }
+ 
+-  ++ num_pkts_acked;
++    ++num_pkts_acked;
+ }
+ 
+-void MarkovianCC::onPktSent(int seq_num) {
+-  double cur_time = current_timestamp();
+-  // double tmp_prev_avg_sending_rate = 0.0;
+-  // if (prev_intersend_time != 0.0)
+-  //   tmp_prev_avg_sending_rate = 1.0 / prev_intersend_time;
+-  unacknowledged_packets[seq_num] = {cur_time,
+-                                     cur_intersend_time,
+-                                     intersend_time_vel,
+-                                     rtt_window.get_unjittered_rtt(),
+-                                     unacknowledged_packets.size() / (cur_time - prev_rtt_update_time)
+-  };
+-
+-  rtt_unacked.force_set(rtt_window.get_unjittered_rtt(), cur_time / min_rtt);
+-  for (auto & x : unacknowledged_packets) {
+-    if (cur_time - x.second.sent_time > rtt_unacked) {
+-      rtt_unacked.update(cur_time - x.second.sent_time, cur_time / min_rtt);
+-      prev_intersend_time = x.second.intersend_time;
+-      prev_intersend_time_vel = x.second.intersend_time_vel;
+-      continue;
++void MarkovianCC::onPktSent(int seq_num)
++{
++    double cur_time = current_timestamp();
++    // double tmp_prev_avg_sending_rate = 0.0;
++    // if (prev_intersend_time != 0.0)
++    //   tmp_prev_avg_sending_rate = 1.0 / prev_intersend_time;
++    unacknowledged_packets[seq_num] = {
++        cur_time, cur_intersend_time, intersend_time_vel,
++        rtt_window.get_unjittered_rtt(),
++        unacknowledged_packets.size() / (cur_time - prev_rtt_update_time)};
++
++    rtt_unacked.force_set(rtt_window.get_unjittered_rtt(), cur_time / min_rtt);
++    for (auto& x : unacknowledged_packets)
++    {
++        if (cur_time - x.second.sent_time > rtt_unacked)
++        {
++            rtt_unacked.update(cur_time - x.second.sent_time,
++                               cur_time / min_rtt);
++            prev_intersend_time     = x.second.intersend_time;
++            prev_intersend_time_vel = x.second.intersend_time_vel;
++            continue;
++        }
++        break;
+     }
+-    break;
+-  }
+-  //update_intersend_time();
+-  ++ num_pkts_sent;
++    // update_intersend_time();
++    ++num_pkts_sent;
+ 
+-  _intersend_time = randomize_intersend(cur_intersend_time);
++    _intersend_time = randomize_intersend(cur_intersend_time);
+ }
+ 
+-void MarkovianCC::close() {
++void MarkovianCC::close()
++{
+ }
+ 
+-void MarkovianCC::onDupACK() {
+-  ///num_pkts_lost ++;
+-  // loss_rate = 1.0 * alpha_loss + loss_rate * (1.0 - alpha_loss);
+-  //slow_start = false;
+-  //update_delta(true);
++void MarkovianCC::onDupACK()
++{
++    /// num_pkts_lost ++;
++    // loss_rate = 1.0 * alpha_loss + loss_rate * (1.0 - alpha_loss);
++    // slow_start = false;
++    // update_delta(true);
+ }
+ 
+-void MarkovianCC::onTimeout() {
+-  //num_pkts_lost ++;
+-  // loss_rate = 1.0 * alpha_loss + loss_rate * (1.0 - alpha_loss);
+-  //cout << "Timeout\n";
+-  //slow_start = false;
+-  //update_delta(true);
++void MarkovianCC::onTimeout()
++{
++    // num_pkts_lost ++;
++    // loss_rate = 1.0 * alpha_loss + loss_rate * (1.0 - alpha_loss);
++    // cout << "Timeout\n";
++    // slow_start = false;
++    // update_delta(true);
+ }
+ 
+-void MarkovianCC::interpret_config_str(string config) {
+-  // Format - [do_ss:][keep_ext_min_rtt:]delta_update_type:param1:param2...
+-  // Delta update types:
+-  //	 -- constant_delta - params:- delta value
+-  //	 -- pfabric_fct - params:- none
+-  //	 -- bounded_delay - params:- delay bound (s)
+-  //	 -- bounded_delay_end - params:- delay bound (s), done in an end-to-end manner
+-
+-  if (config.substr(0, 6) == "do_ss:") {
+-    do_slow_start = true;
+-    config = config.substr(6, string::npos);
+-    cout << "Will do slow start" << endl;
+-  }
+-  if (config.substr(0, 17) == "keep_ext_min_rtt:") {
+-    keep_ext_min_rtt = true;
+-    config = config.substr(17, string::npos);
+-    cout << "Will keep external Min. RTT" << endl;
+-  }
+-  // if (config.substr(0, 14) == "default_delta:") {
+-  //   keep_ext_min_rtt = true;
+-  //   default_delta = atof(config.substr(14, string::npos).c_str());
+-  //   default_delta = config.substr(14, string::npos);
+-  //   cout << "Will use a default delta of " << default_delta << endl;
+-  // }
+-
+-  delta = 1; // If delta is not set in time, we don't want it to be 0
+-  if (config.substr(0, 15) == "constant_delta:") {
+-    utility_mode = CONSTANT_DELTA;
+-    delta = atof(config.substr(15, string::npos).c_str());
+-    cout << "Constant delta mode with delta = " << delta << endl;
+-  }
+-  else if (config.substr(0, 11) == "pfabric_fct") {
+-    utility_mode = PFABRIC_FCT;
+-    cout << "Minimizing FCT PFabric style" << endl;
+-  }
+-  else if (config.substr(0, 14) == "bounded_delay:") {
+-    utility_mode = BOUNDED_DELAY;
+-    delay_bound = stof(config.substr(14, string::npos).c_str());
+-    cout << "Bounding delay to " << delay_bound << " s" << endl;
+-  }
+-  else if (config.substr(0, 18) == "bounded_delay_end:") {
+-    utility_mode = BOUNDED_DELAY_END;
+-    delay_bound = stof(config.substr(18, string::npos).c_str());
+-    cout << "Bounding delay to " << delay_bound << " s in an end-to-end manner" << endl;
+-  }
+-  else if (config.substr(0, 19) == "bounded_qdelay_end:") {
+-    utility_mode = BOUNDED_QDELAY_END;
+-    delay_bound = stof(config.substr(19, string::npos).c_str());
+-    cout << "Bounding queuing delay to " << delay_bound << " s in an end-to-end manner" << endl;
+-  }
+-  else if (config.substr(0, 18) == "bounded_fdelay_end:") {
+-    utility_mode = BOUNDED_FDELAY_END;
+-    delay_bound = stof(config.substr(18, string::npos).c_str());
+-    cout << "Bounding fractional queuing delay to " << delay_bound << " s in an end-to-end manner" << endl;
+-  }
+-  else if (config.substr(0, 14) == "max_throughput") {
+-    utility_mode = MAX_THROUGHPUT;
+-    cout << "Maximizing throughput" << endl;
+-  }
+-  else if (config.substr(0, 16) == "different_deltas") {
+-    utility_mode = CONSTANT_DELTA;
+-    delta = flow_id * 0.5;
+-    cout << "Setting constant delta to " << delta << endl;
+-  }
+-  else if (config.substr(0, 8) == "tcp_coop") {
+-    utility_mode = TCP_COOP;
+-    cout << "Cooperating with TCP" << delta << endl;
+-  }
+-  else if (config.substr(0, 14) == "const_behavior") {
+-    utility_mode = CONST_BEHAVIOR;
+-    behavior = stof(config.substr(15, string::npos).c_str());
+-    cout << "Exhibiting constant behavior " << behavior << endl;
+-  }
+-  else if (config.substr(0, 5) == "auto:") {
+-    utility_mode = AUTO_MODE;
+-    default_delta = atof(config.substr(5, string::npos).c_str());
+-    delta = default_delta;
+-    cout << "Using Automatic Mode with default delta = " << default_delta << endl;
+-  }
+-  else {
+-    utility_mode = CONSTANT_DELTA;
+-    delta = 1.0;
+-    cout << "Incorrect format of configuration string '" << config
+-	 << "'. Using constant delta mode with delta = 1 by default" << endl;
+-  }
++void MarkovianCC::interpret_config_str(string config)
++{
++    // Format - [do_ss:][keep_ext_min_rtt:]delta_update_type:param1:param2...
++    // Delta update types:
++    //	 -- constant_delta - params:- delta value
++    //	 -- pfabric_fct - params:- none
++    //	 -- bounded_delay - params:- delay bound (s)
++    //	 -- bounded_delay_end - params:- delay bound (s), done in an end-to-end
++    // manner
++
++    if (config.substr(0, 6) == "do_ss:")
++    {
++        do_slow_start = true;
++        config        = config.substr(6, string::npos);
++        cout << "Will do slow start" << endl;
++    }
++    if (config.substr(0, 17) == "keep_ext_min_rtt:")
++    {
++        keep_ext_min_rtt = true;
++        config           = config.substr(17, string::npos);
++        cout << "Will keep external Min. RTT" << endl;
++    }
++    // if (config.substr(0, 14) == "default_delta:") {
++    //   keep_ext_min_rtt = true;
++    //   default_delta = atof(config.substr(14, string::npos).c_str());
++    //   default_delta = config.substr(14, string::npos);
++    //   cout << "Will use a default delta of " << default_delta << endl;
++    // }
++
++    delta = 1; // If delta is not set in time, we don't want it to be 0
++    if (config.substr(0, 15) == "constant_delta:")
++    {
++        utility_mode = CONSTANT_DELTA;
++        delta        = atof(config.substr(15, string::npos).c_str());
++        cout << "Constant delta mode with delta = " << delta << endl;
++    }
++    else if (config.substr(0, 11) == "pfabric_fct")
++    {
++        utility_mode = PFABRIC_FCT;
++        cout << "Minimizing FCT PFabric style" << endl;
++    }
++    else if (config.substr(0, 14) == "bounded_delay:")
++    {
++        utility_mode = BOUNDED_DELAY;
++        delay_bound  = stof(config.substr(14, string::npos).c_str());
++        cout << "Bounding delay to " << delay_bound << " s" << endl;
++    }
++    else if (config.substr(0, 18) == "bounded_delay_end:")
++    {
++        utility_mode = BOUNDED_DELAY_END;
++        delay_bound  = stof(config.substr(18, string::npos).c_str());
++        cout << "Bounding delay to " << delay_bound
++             << " s in an end-to-end manner" << endl;
++    }
++    else if (config.substr(0, 19) == "bounded_qdelay_end:")
++    {
++        utility_mode = BOUNDED_QDELAY_END;
++        delay_bound  = stof(config.substr(19, string::npos).c_str());
++        cout << "Bounding queuing delay to " << delay_bound
++             << " s in an end-to-end manner" << endl;
++    }
++    else if (config.substr(0, 18) == "bounded_fdelay_end:")
++    {
++        utility_mode = BOUNDED_FDELAY_END;
++        delay_bound  = stof(config.substr(18, string::npos).c_str());
++        cout << "Bounding fractional queuing delay to " << delay_bound
++             << " s in an end-to-end manner" << endl;
++    }
++    else if (config.substr(0, 14) == "max_throughput")
++    {
++        utility_mode = MAX_THROUGHPUT;
++        cout << "Maximizing throughput" << endl;
++    }
++    else if (config.substr(0, 16) == "different_deltas")
++    {
++        utility_mode = CONSTANT_DELTA;
++        delta        = flow_id * 0.5;
++        cout << "Setting constant delta to " << delta << endl;
++    }
++    else if (config.substr(0, 8) == "tcp_coop")
++    {
++        utility_mode = TCP_COOP;
++        cout << "Cooperating with TCP" << delta << endl;
++    }
++    else if (config.substr(0, 14) == "const_behavior")
++    {
++        utility_mode = CONST_BEHAVIOR;
++        behavior     = stof(config.substr(15, string::npos).c_str());
++        cout << "Exhibiting constant behavior " << behavior << endl;
++    }
++    else if (config.substr(0, 5) == "auto:")
++    {
++        utility_mode  = AUTO_MODE;
++        default_delta = atof(config.substr(5, string::npos).c_str());
++        delta         = default_delta;
++        cout << "Using Automatic Mode with default delta = " << default_delta
++             << endl;
++    }
++    else
++    {
++        utility_mode = CONSTANT_DELTA;
++        delta        = 1.0;
++        cout << "Incorrect format of configuration string '" << config
++             << "'. Using constant delta mode with delta = 1 by default"
++             << endl;
++    }
+ }
+diff --git a/parsing_scripts/analyse_data.py b/parsing_scripts/analyse_data.py
+index b3a036a..4e741c9 100644
+--- a/parsing_scripts/analyse_data.py
++++ b/parsing_scripts/analyse_data.py
+@@ -19,8 +19,8 @@ def weighted_means(data):
+       tot_time += conn['TransmitTime']
+       tot_pkts += conn['NumPkts']
+     except:
+-      print "Error:- "
+-      print conn
++      print ("Error:- ")
++      print (conn)
+ 
+   if tot_time == 0 or tot_pkts == 0:
+     return (None, None)
+@@ -52,9 +52,9 @@ def analyse_remy_with_kernel(directory, endpt_name):
+       dat = weighted_means(parse_ctcp_output.parse_file(filename, print_csv=False))      
+     if dat != None:
+       if dat[0] == None or dat[0] == None:
+-        print filename_short, "\t\t\t\t\t", dat
++        print (filename_short, "\t\t\t\t\t", dat)
+       else:
+-        print filename_short, '\t\t\t\t\t', (dat[0]/1e6, dat[1])
++        print (filename_short, '\t\t\t\t\t', (dat[0]/1e6, dat[1]))
+ 
+ def collect_data_from_directory(directory, endpt_name, output_directory="/tmp/"):
+   re_kernel_name = re.compile('kernel.*-([0-9]+)-tcptrace')
+@@ -72,7 +72,7 @@ def collect_data_from_directory(directory, endpt_name, output_directory="/tmp/")
+           num_senders = int(re_kernel_name.match(fname).group(1))
+           if num_senders not in num_senders_list:
+               num_senders_list[num_senders] = None
+-          print full_fname
++          print (full_fname)
+           
+           #assert( (num_senders, 'kernel') not in data_bins )
+           temp = parse_tcptrace.parse_file(full_fname, print_csv=False, endpt_name=endpt_name, dst_endpt_name=endpt_name)
+@@ -99,16 +99,16 @@ def plot_graphs(data_bins, num_senders_list, rat_names, output_directory):
+   colors = {} #key: ratname, value: color string
+   for x in rat_names:
+     colors[x] = color_list[color_ctr]
+-    print color_list[color_ctr], x
++    print (color_list[color_ctr], x)
+     color_ctr += 1
+ 
+   for num_senders in  num_senders_list:
+-    print num_senders, "Senders"
++    print (num_senders, "Senders")
+     for datapt in data_bins:
+       if datapt[0] != num_senders:
+         continue
+       if len(data_bins[datapt][0]) == 0 or len(data_bins[datapt][1]) == 0:
+-        print "Warning: Empty data list for ", datapt
++        print("Warning: Empty data list for ", datapt)
+         continue
+       plot_ellipse.plot_point_cov(np.asarray(data_bins[datapt][0]), weights=np.asarray(data_bins[datapt][1]), nstd=1, color=colors[datapt[1]], alpha=0.5)
+       rnd = [random.random() < 1 for x in data_bins[datapt][0]]
+diff --git a/parsing_scripts/auto-plot.py b/parsing_scripts/auto-plot.py
+index 26184e1..3dd3593 100644
+--- a/parsing_scripts/auto-plot.py
++++ b/parsing_scripts/auto-plot.py
+@@ -24,7 +24,7 @@ def read_remy_datafile(filename, pts):
+             if rtt == 0 or throughput == 0:
+                 continue
+             if throughput < 1e4:
+-                print throughput
++                print (throughput)
+                 #continue
+             pts.append( [rtt, throughput] )
+         else:
+@@ -46,11 +46,11 @@ def read_tcp_datafile(filename, pts):
+                 #print "Attribute error at '" + line + "'"
+                 continue
+             except ValueError:
+-                print "Value error at '" + line + "'"
++                print ("Value error at '" + line + "'")
+                 continue
+ 
+             if cur_throughput == None:
+-                print "Warning: Throughput is None though rtt was found"
++                print ("Warning: Throughput is None though rtt was found")
+                 continue
+ 
+             cur_rtt = max( float(vals[0]), float(vals[1]) )
+@@ -64,7 +64,7 @@ def read_tcp_datafile(filename, pts):
+                 #print "Attribute error at '" + line + "'"
+                 continue
+             except ValueError:
+-                print "Value error at '" + line + "'"
++                print ("Value error at '" + line + "'")
+                 continue
+ 
+             cur_throughput = max( int(vals[0]), int(vals[1]) )
+@@ -112,7 +112,7 @@ def collect_data_from_directory(directory):
+             nash_name, num_senders = tmp[0], int(tmp[1])
+             if nash_name == 'nash':
+                 nash_name = 'nash1'
+-                print "Renaming 'nash'"
++                print ("Renaming 'nash'")
+ #            assert((num_senders, remy_name) not in data_bins)
+             if num_senders not in num_senders_list:
+                 num_senders_list[num_senders] = None
+@@ -134,16 +134,16 @@ def plot_graphs(data_bins, num_senders_list, rat_names):
+     colors = {} #key: ratname, value: color string
+     for x in rat_names:
+         colors[x] = color_list[color_ctr]
+-        print color_list[color_ctr], x
++        print (color_list[color_ctr], x)
+         color_ctr += 1
+ 
+     for num_senders in  num_senders_list:
+-        print num_senders, "Senders"
++        print (num_senders, "Senders")
+         for datapt in data_bins:
+             if datapt[0] != num_senders:
+                 continue
+             if datapt[1] == '145--155-linkppt2667.dna.4-0':# or datapt[1] == 'nash0.1' or datapt[1] == 'nash1':
+-                print "Ignoring ", datapt
++                print ("Ignoring ", datapt)
+                 continue
+             #plot_ellipse.plot_point_cov(np.asarray(data_bins[datapt]), nstd=1, color=colors[datapt[1]], alpha=0.5)
+             rnd = [random.random() < 0.3 for x in data_bins[datapt]]
+diff --git a/parsing_scripts/automatic-tests.py b/parsing_scripts/automatic-tests.py
+index 60582ec..83d6e6b 100644
+--- a/parsing_scripts/automatic-tests.py
++++ b/parsing_scripts/automatic-tests.py
+@@ -70,6 +70,6 @@ if __name__ == '__main__':
+         num_senders = num_senders_list[ random.randrange(len(num_senders_list)) ]
+         num_kernels = num_kernels_list[ random.randrange(len(num_kernels_list)) ]
+ 
+-        print "Running '" + cctype + "' with " + str(num_senders) + " senders" + (" with '" + rat_names[rat_id] + "'", "")[cctype == 'kernel']
++        print ("Running '" + cctype + "' with " + str(num_senders) + " senders" + (" with '" + rat_names[rat_id] + "'", "")[cctype == 'kernel'])
+ 
+         run_test(cctype, rat_id, num_senders, num_kernels, cmd_line_args)
+diff --git a/parsing_scripts/parse_ctcp_output.py b/parsing_scripts/parse_ctcp_output.py
+index bed788e..f357df2 100644
+--- a/parsing_scripts/parse_ctcp_output.py
++++ b/parsing_scripts/parse_ctcp_output.py
+@@ -71,13 +71,13 @@ def parse_file(filename, print_csv=False):
+     res = ""
+     for title in interesting_properties:
+       res += title + ", "
+-    print res[:-2]
++    print (res[:-2])
+ 
+     for conn in connections:
+       res = ""
+       for title in interesting_properties:
+         res += str(conn[title]) + ", "
+-      print res[:-2]
++      print (res[:-2])
+   return connections
+ 
+ if __name__ == '__main__':
+diff --git a/parsing_scripts/parse_tcptrace.py b/parsing_scripts/parse_tcptrace.py
+index 514f038..c3f3c58 100644
+--- a/parsing_scripts/parse_tcptrace.py
++++ b/parsing_scripts/parse_tcptrace.py
+@@ -70,19 +70,19 @@ def parse_file(filename, endpt_name="csail.mit.edu", dst_endpt_name="csail.mit.e
+         except AttributeError: #posssibly because of 'NA' appearing in 'line'
+           conn_details[prop] = 0.0
+           state = 0 #skip this connection
+-          print "Warning: Skipping a connection"
++          print ("Warning: Skipping a connection")
+ 
+   if print_csv:
+     res = ""
+     for title in title_rename_table:
+       res += title_rename_table[title] + ", "
+-    print res[:-2]
++    print (res[:-2])
+ 
+     for conn in connections:
+       res = ""
+       for title in title_rename_table:
+         res += str(conn[title_rename_table[title]]) + ", "
+-      print res[:-2]
++      print (res[:-2])
+   return connections
+ 
+ if __name__ == '__main__':
+diff --git a/parsing_scripts/plot_vary_mahimahi_configs.py b/parsing_scripts/plot_vary_mahimahi_configs.py
+index 9f0820b..798fc0a 100644
+--- a/parsing_scripts/plot_vary_mahimahi_configs.py
++++ b/parsing_scripts/plot_vary_mahimahi_configs.py
+@@ -100,7 +100,7 @@ def get_nearest_ns_throughput_delay(cc_type, vary_type, value):
+ 			tot_time += duration
+ 			tot_bytes += throughput * duration # exact units don't matter
+ 	if tot_time == 0  or tot_bytes == 0:
+-		print "Warning: Nothing found for ", (cc_type, vary_type, value)
++		print ("Warning: Nothing found for ", (cc_type, vary_type, value))
+ 		return (1, 1)
+ 	throughput = tot_bytes / tot_time
+ 	delay /= tot_bytes
+@@ -176,10 +176,10 @@ def plot_data(mahimahi_directory, remysim_directory, vary_link, delta=1):
+ 
+ 		linkrate, minrtt = match.group('linkrate'), match.group('minrtt')
+ 		ratname = match.group('ratname') + ('', '-remysim')[remysim] + ' ' + match.group('numsenders') + 'senders'
+-		print ratname, linkrate, minrtt
++		print (ratname, linkrate, minrtt)
+ 
+ 		if filename.find('remysim') != -1 or filename.find('us-') != -1:
+-			print "Ignoring ", filename
++			print ("Ignoring ", filename)
+ 			continue
+ 
+ 		if ratname not in values:
+@@ -196,7 +196,7 @@ def plot_data(mahimahi_directory, remysim_directory, vary_link, delta=1):
+ 				delay += float(line_match.group('delay'))
+ 				numsenders += 1
+ 			if numsenders < 2:
+-				print "Skipping ", filename
++				print ("Skipping ", filename)
+ 				continue
+ 			assert( numsenders == 2 )
+ 			throughput, delay = throughput/numsenders, delay/numsenders
+@@ -211,7 +211,7 @@ def plot_data(mahimahi_directory, remysim_directory, vary_link, delta=1):
+ 				data = parse_ctcp_output.parse_file(filename)
+ 			throughput, delay = analyse_data.weighted_means(data)
+ 			if throughput == None or delay == None:
+-				print "Warning: No data present in ", filename
++				print ("Warning: No data present in ", filename)
+ 				continue
+ 			throughput /= 1e6 * float(linkrate) # convert to MBps and normalize
+ 			throughput *= 1500.0 / 1468.0 # compensate for differences in data sizes
+@@ -245,21 +245,21 @@ def plot_data(mahimahi_directory, remysim_directory, vary_link, delta=1):
+ 		# tmp_values.append( (value, ns_throughput, ns_delay, 'ns') )
+ 
+ 	tmp_values.sort(cmp=lambda x,y: ((1, -1)[x[0] > y[0]], 0)[x[0] == y[0]])
+-	for x in tmp_values: print x
++	for x in tmp_values: print (x)
+ 
+ 	colors = ['r', 'g', 'b', 'c', 'm', 'y', 'k', '0.75', '0.5', '0.25', '#663311', '#113366'] 
+ 	color_ctr = 0
+-	print "For " + ('rtt', 'link rate')[vary_link] + " = " + str(fixed_value)
++	print ("For " + ('rtt', 'link rate')[vary_link] + " = " + str(fixed_value))
+ 	
+ 	for rat in values:
+ 		if rat.find('ns2') != -1: 
+ 			continue
+-		print rat, '\t', colors[color_ctr]
++		print (rat, '\t', colors[color_ctr])
+ 		values[rat].sort(cmp=lambda x,y: ((-1, 1)[x[0] > y[0]], 0)[x[0]==y[0]])
+ 		try:
+ 			x, y = zip(*values[rat])
+ 		except ValueError:
+-			print "Warning: No data for rat '" + rat + "'"
++			print ("Warning: No data for rat '" + rat + "'")
+ 			continue
+ 		plt.plot(x, y, colors[color_ctr], alpha=0.8, label=rat)
+ 		color_ctr += 1
+@@ -276,12 +276,12 @@ def plot_data(mahimahi_directory, remysim_directory, vary_link, delta=1):
+ 	for rat in values:
+ 		if rat.find('ns2') == -1: 
+ 			continue
+-		print rat, '\t', colors[color_ctr]
++		print (rat, '\t', colors[color_ctr])
+ 		values[rat].sort(cmp=lambda x,y: ((-1, 1)[x[0] > y[0]], 0)[x[0]==y[0]])
+ 		try:
+ 			x, y = zip(*values[rat])
+ 		except ValueError:
+-			print "Warning: No data for rat '" + rat + "'"
++			print ("Warning: No data for rat '" + rat + "'")
+ 			continue
+ 		plt.plot(x, y, colors[color_ctr], alpha=0.8, label=rat)
+ 		color_ctr += 1
+@@ -302,6 +302,6 @@ if __name__ == '__main__':
+ 
+ 	cmd_line_args = argparser.parse_args()
+ 
+-	print "Preprocessing ns results directory"
++	print ("Preprocessing ns results directory")
+ 	preprocess_ns_directory(cmd_line_args.ns_results)
+ 	plot_data(cmd_line_args.input_directory, "", cmd_line_args.vary_link)
+\ No newline at end of file
+diff --git a/rat.cc b/rat.cc
+index a25055c..b138e41 100644
+--- a/rat.cc
++++ b/rat.cc
+@@ -5,87 +5,116 @@
+ 
+ using namespace std;
+ 
+-Rat::Rat( WhiskerTree & s_whiskers, const bool s_track )
+-  :  _whiskers( s_whiskers ),
+-     _memory(),
+-     _packets_sent( 0 ),
+-     _packets_received( 0 ),
+-     _track( s_track ),
+-     _last_send_time( 0 ),
+-     _the_window( 0 ),
+-     _intersend_time( 0 ),
+-     _flow_id( 0 ),
+-     _largest_ack( -1 )
++Rat::Rat(WhiskerTree& s_whiskers, const bool s_track)
++    : _whiskers(s_whiskers),
++      _memory(),
++      _packets_sent(0),
++      _packets_received(0),
++      _track(s_track),
++      _last_send_time(0),
++      _the_window(0),
++      _intersend_time(0),
++      _flow_id(0),
++      _largest_ack(-1)
+ {
+ }
+ 
+-void Rat::packets_received( const vector< Packet > & packets, const double link_rate_normalizing_factor ) {
+-  _packets_received += packets.size();
+-  
+-  int flow_id = -1;
+-  assert( packets.size() );
+-  for ( auto &packet : packets ){
+-    _largest_ack = max( packet.seq_num, _largest_ack );
+-    flow_id = packet.flow_id;
+-  }
+-  assert( flow_id != -1 );
++Rat::Rat(const Rat& other)
++    : _whiskers(other._whiskers),
++      _memory(other._memory),
++      _packets_sent(other._packets_sent),
++      _packets_received(other._packets_received),
++      _track(other._track),
++      _last_send_time(other._last_send_time),
++      _the_window(other._the_window),
++      _intersend_time(other._intersend_time),
++      _flow_id(other._flow_id),
++      _largest_ack(other._largest_ack)
++{
++}
++
++void Rat::packets_received(const vector<Packet>& packets,
++                           const double          link_rate_normalizing_factor)
++{
++    _packets_received += packets.size();
++
++    int flow_id = -1;
++    assert(packets.size());
++    for (auto& packet : packets)
++    {
++        _largest_ack = max(packet.seq_num, _largest_ack);
++        flow_id      = packet.flow_id;
++    }
++    assert(flow_id != -1);
+ 
+-  _memory.packets_received( packets, flow_id/*_flow_id*/, link_rate_normalizing_factor );
++    _memory.packets_received(packets, flow_id /*_flow_id*/,
++                             link_rate_normalizing_factor);
+ 
+-  const Whisker & current_whisker( _whiskers.use_whisker( _memory, _track ) );
++    const Whisker& current_whisker(_whiskers.use_whisker(_memory, _track));
+ 
+-  _the_window = current_whisker.window( _the_window );
+-  _intersend_time = current_whisker.intersend();
++    _the_window     = current_whisker.window(_the_window);
++    _intersend_time = current_whisker.intersend();
+ }
+ 
+-void Rat::reset( const double & )
++void Rat::reset(const double&)
+ {
+-  _memory.reset();
+-  _last_send_time = 0;
+-  _the_window = 0;
+-  _intersend_time = 0;
+-  _flow_id++;
+-  _largest_ack = _packets_sent - 1; /* Assume everything's been delivered */
+-  assert( _flow_id != 0 );
++    _memory.reset();
++    _last_send_time = 0;
++    _the_window     = 0;
++    _intersend_time = 0;
++    _flow_id++;
++    _largest_ack = _packets_sent - 1; /* Assume everything's been delivered */
++    assert(_flow_id != 0);
+ }
+ 
+-double Rat::next_event_time( const double & tickno ) const
++double Rat::next_event_time(const double& tickno) const
+ {
+-  if ( _packets_sent < _largest_ack + 1 + _the_window ) {
+-    if ( _last_send_time + _intersend_time <= tickno ) {
+-      return tickno;
+-    } else {
+-      return _last_send_time + _intersend_time;
++    if (_packets_sent < _largest_ack + 1 + _the_window)
++    {
++        if (_last_send_time + _intersend_time <= tickno)
++        {
++            return tickno;
++        }
++        else
++        {
++            return _last_send_time + _intersend_time;
++        }
++    }
++    else
++    {
++        /* window is currently closed */
++        return std::numeric_limits<double>::max();
+     }
+-  } else {
+-    /* window is currently closed */
+-    return std::numeric_limits<double>::max();
+-  }
+ }
+ 
+-// returns whether or not a packet should be sent. If yes, updates internal state accordingly
+-bool Rat::send( const double & curtime )
++// returns whether or not a packet should be sent. If yes, updates internal
++// state accordingly
++bool Rat::send(const double& curtime)
+ {
+-  assert( _packets_sent >= _largest_ack + 1 );
+-
+-  if ( _the_window == 0 ) {
+-    /* initial window and intersend time */
+-    const Whisker & current_whisker( _whiskers.use_whisker( _memory, _track ) );
+-    _the_window = current_whisker.window( _the_window );
+-    _intersend_time = current_whisker.intersend();
+-    // assert(_the_window != 0 ); //edit - venkat - just to ensure that a sender doesn't stay 0 forever because right now, I believe that memory will never be called if no packets are sent. But something tells me that my understanding is incorrect
+-  }
++    assert(_packets_sent >= _largest_ack + 1);
+ 
+-  if ( (_packets_sent < _largest_ack + 1 + _the_window)
+-       and (_last_send_time + _intersend_time <= curtime) ) {
++    if (_the_window == 0)
++    {
++        /* initial window and intersend time */
++        const Whisker& current_whisker(_whiskers.use_whisker(_memory, _track));
++        _the_window     = current_whisker.window(_the_window);
++        _intersend_time = current_whisker.intersend();
++        // assert(_the_window != 0 ); //edit - venkat - just to ensure that a
++        // sender doesn't stay 0 forever because right now, I believe that
++        // memory will never be called if no packets are sent. But something
++        // tells me that my understanding is incorrect
++    }
+ 
+-    //Packet p( id, _flow_id, curtime, _packets_sent );
+-    _packets_sent++;
+-    //_memory.packet_sent( p );
+-    //next.accept( p, curtime );
+-    _last_send_time = curtime;
+-    return true;
+-  }
++    if ((_packets_sent < _largest_ack + 1 + _the_window) and
++        (_last_send_time + _intersend_time <= curtime))
++    {
++        // Packet p( id, _flow_id, curtime, _packets_sent );
++        _packets_sent++;
++        //_memory.packet_sent( p );
++        // next.accept( p, curtime );
++        _last_send_time = curtime;
++        return true;
++    }
+ 
+-  return false;
++    return false;
+ }
+\ No newline at end of file
+diff --git a/rat.hh b/rat.hh
+index aefe2d5..be6c9a7 100644
+--- a/rat.hh
++++ b/rat.hh
+@@ -1,51 +1,71 @@
+ #ifndef RAT_HH
+ #define RAT_HH
+ 
+-#include <vector>
+-#include <string>
+ #include <limits>
++#include <string>
++#include <vector>
+ 
++#include "memory.hh"
+ #include "packet.hh"
+ #include "whiskertree.hh"
+-#include "memory.hh"
+ 
+ class Rat
+ {
+ private:
+-  const WhiskerTree & _whiskers;
+-  Memory _memory;
++    const WhiskerTree& _whiskers;
++    Memory             _memory;
+ 
+-  int _packets_sent, _packets_received;
++    int _packets_sent, _packets_received;
+ 
+-  bool _track;
++    bool _track;
+ 
+-  double _last_send_time;
++    double _last_send_time;
+ 
+-  int _the_window;
+-  double _intersend_time;
++    int    _the_window;
++    double _intersend_time;
+ 
+-  unsigned int _flow_id;
+-  // This represents the largest sequence number from among the packets recieved (via packets_recieved) from SenderGang. So this is not the ACK in the traditional sense but is 
+-  int _largest_ack;
++    unsigned int _flow_id;
++    // This represents the largest sequence number from among the packets
++    // recieved (via packets_recieved) from SenderGang. So this is not the ACK
++    // in the traditional sense but is
++    int _largest_ack;
+ 
+ public:
+-  Rat( WhiskerTree & s_whiskers, const bool s_track=false );
+-
+-  void packets_received( const std::vector< Packet > & packets, const double link_rate_normalizing_factor );
+-  void reset( const double & tickno ); /* start new flow */
+-
+-  bool send( const double & curtime );
+-
+-  const WhiskerTree & whiskers( void ) const { return _whiskers; }
+-
+-  Rat & operator=( const Rat & ) { assert( false ); return *this; }
+-
+-  double next_event_time( const double & tickno ) const;
+-
+-  const int & packets_sent( void ) const { return _packets_sent; }
+-
+-  int cur_window_size() const { return _the_window; }
+-  double cur_intersend_time() const {return _intersend_time; }
++    Rat(WhiskerTree& s_whiskers, const bool s_track = false);
++    Rat(const Rat& other);
++
++    void packets_received(const std::vector<Packet>& packets,
++                          const double link_rate_normalizing_factor);
++    void reset(const double& tickno); /* start new flow */
++
++    bool send(const double& curtime);
++
++    const WhiskerTree& whiskers(void) const
++    {
++        return _whiskers;
++    }
++
++    Rat& operator=(const Rat&)
++    {
++        assert(false);
++        return *this;
++    }
++
++    double next_event_time(const double& tickno) const;
++
++    const int& packets_sent(void) const
++    {
++        return _packets_sent;
++    }
++
++    int cur_window_size() const
++    {
++        return _the_window;
++    }
++    double cur_intersend_time() const
++    {
++        return _intersend_time;
++    }
+ };
+ 
+ #endif
+\ No newline at end of file
+diff --git a/whisker.hh b/whisker.hh
+index ca8b24f..5ed2706 100644
+--- a/whisker.hh
++++ b/whisker.hh
+@@ -4,113 +4,166 @@
+ #include <string>
+ #include <vector>
+ 
+-#include "memoryrange.hh"
+ #include "dna.pb.h"
++#include "memoryrange.hh"
+ 
+-class Whisker {
++class Whisker
++{
+ private:
+-  unsigned int _generation;
++    unsigned int _generation;
+ 
+-  int _window_increment;
+-  double _window_multiple;
+-  double _intersend;
++    int    _window_increment;
++    double _window_multiple;
++    double _intersend;
+ 
+-  MemoryRange _domain;
++    MemoryRange _domain;
+ 
+ public:
+-  Whisker( const Whisker & other );
+-  Whisker( const unsigned int s_window_increment, const double s_window_multiple, const double s_intersend, const MemoryRange & s_domain );
+-
+-  Whisker( const MemoryRange & s_domain ) : Whisker( get_optimizer().window_increment.default_value,
+-						     get_optimizer().window_multiple.default_value,
+-						     get_optimizer().intersend.default_value, s_domain ) {}
++    Whisker(const Whisker& other);
++    Whisker(const unsigned int s_window_increment,
++            const double s_window_multiple, const double s_intersend,
++            const MemoryRange& s_domain);
++
++    Whisker(const MemoryRange& s_domain)
++        : Whisker(get_optimizer().window_increment.default_value,
++                  get_optimizer().window_multiple.default_value,
++                  get_optimizer().intersend.default_value, s_domain)
++    {
++    }
+ 
+-  void use( void ) const { _domain.use(); }
+-  void reset_count( void ) const { _domain.reset_count(); }
+-  unsigned int count( void ) const { return _domain.count(); }
++    void use(void) const
++    {
++        _domain.use();
++    }
++    void reset_count(void) const
++    {
++        _domain.reset_count();
++    }
++    unsigned int count(void) const
++    {
++        return _domain.count();
++    }
+ 
+-  const unsigned int & generation( void ) const { return _generation; }
+-  unsigned int window( const unsigned int previous_window ) const { return std::min( std::max( 0, int( previous_window * _window_multiple + _window_increment ) ), 1000000 ); }
+-  const double & intersend( void ) const { return _intersend; }
+-  const MemoryRange & domain( void ) const { return _domain; }
++    const unsigned int& generation(void) const
++    {
++        return _generation;
++    }
++    unsigned int window(const unsigned int previous_window) const
++    {
++        return std::min(std::max(0, int(previous_window * _window_multiple +
++                                        _window_increment)),
++                        1000000);
++    }
++    const double& intersend(void) const
++    {
++        return _intersend;
++    }
++    const MemoryRange& domain(void) const
++    {
++        return _domain;
++    }
+ 
+-  std::vector< Whisker > next_generation( void ) const;
++    std::vector<Whisker> next_generation(void) const;
+ 
+-  void promote( const unsigned int generation );
++    void promote(const unsigned int generation);
+ 
+-  std::string str( const unsigned int total=1 ) const;
++    std::string str(const unsigned int total = 1) const;
+ 
+-  std::vector< Whisker > bisect( void ) const;
++    std::vector<Whisker> bisect(void) const;
+ 
+-  void demote( const unsigned int generation ) { _generation = generation; }
++    void demote(const unsigned int generation)
++    {
++        _generation = generation;
++    }
+ 
+-  RemyBuffers::Whisker DNA( void ) const;
+-  Whisker( const RemyBuffers::Whisker & dna );
++    RemyBuffers::Whisker DNA(void) const;
++    Whisker(const RemyBuffers::Whisker& dna);
+ 
+-  void round( void );
++    void round(void);
+ 
+-  bool operator==( const Whisker & other ) const { return (_window_increment == other._window_increment) && (_window_multiple == other._window_multiple) && (_intersend == other._intersend) && (_domain == other._domain); }
++    bool operator==(const Whisker& other) const
++    {
++        return (_window_increment == other._window_increment) &&
++               (_window_multiple == other._window_multiple) &&
++               (_intersend == other._intersend) && (_domain == other._domain);
++    }
+ 
+-  friend size_t hash_value( const Whisker & whisker );
++    Whisker& operator=(const Whisker& other)
++    {
++        if (this != &other)
++        {
++            _window_increment = other._window_increment;
++            _window_multiple  = other._window_multiple;
++            _intersend        = other._intersend;
++            _domain           = other._domain;
++        }
++        return *this;
++    }
+ 
+-  template < typename T >
+-  struct OptimizationSetting
+-  {
+-    T min_value; /* the smallest the value can be */
+-    T max_value; /* the biggest */
++    friend size_t hash_value(const Whisker& whisker);
+ 
+-    T min_change; /* the smallest change to the value in an optimization exploration step */
+-    T max_change; /* the biggest change */
++    template <typename T>
++    struct OptimizationSetting
++    {
++        T min_value; /* the smallest the value can be */
++        T max_value; /* the biggest */
+ 
+-    T multiplier; /* we will explore multiples of the min_change until we hit the max_change */
+-    /* the multiplier defines which multiple (e.g. 1, 2, 4, 8... or 1, 3, 9, 27... ) */
++        T min_change; /* the smallest change to the value in an optimization
++                         exploration step */
++        T max_change; /* the biggest change */
+ 
+-    T default_value;
++        T multiplier; /* we will explore multiples of the min_change until we
++                         hit the max_change */
++        /* the multiplier defines which multiple (e.g. 1, 2, 4, 8... or 1, 3,
++         * 9, 27... ) */
+ 
+-    std::vector< T > alternatives( const T & value ) const;
+-    bool eligible_value( const T & value ) const;
++        T default_value;
+ 
+-    RemyBuffers::OptimizationSetting DNA( void ) const
+-    {
+-      RemyBuffers::OptimizationSetting ret;
++        std::vector<T> alternatives(const T& value) const;
++        bool           eligible_value(const T& value) const;
+ 
+-      ret.set_min_value( min_value );
+-      ret.set_max_value( max_value );
+-      ret.set_min_change( min_change );
+-      ret.set_max_change( max_change );
+-      ret.set_multiplier( multiplier );
+-      ret.set_default_value( default_value );
++        RemyBuffers::OptimizationSetting DNA(void) const
++        {
++            RemyBuffers::OptimizationSetting ret;
+ 
+-      return ret;
+-    }
+-  };
++            ret.set_min_value(min_value);
++            ret.set_max_value(max_value);
++            ret.set_min_change(min_change);
++            ret.set_max_change(max_change);
++            ret.set_multiplier(multiplier);
++            ret.set_default_value(default_value);
+ 
+-  struct OptimizationSettings
+-  {
+-    OptimizationSetting< unsigned int > window_increment;
+-    OptimizationSetting< double > window_multiple;
+-    OptimizationSetting< double > intersend;
++            return ret;
++        }
++    };
+ 
+-    RemyBuffers::OptimizationSettings DNA( void ) const
++    struct OptimizationSettings
+     {
+-      RemyBuffers::OptimizationSettings ret;
++        OptimizationSetting<unsigned int> window_increment;
++        OptimizationSetting<double>       window_multiple;
++        OptimizationSetting<double>       intersend;
+ 
+-      ret.mutable_window_increment()->CopyFrom( window_increment.DNA() );
+-      ret.mutable_window_multiple()->CopyFrom( window_multiple.DNA() );
+-      ret.mutable_intersend()->CopyFrom( intersend.DNA() );
++        RemyBuffers::OptimizationSettings DNA(void) const
++        {
++            RemyBuffers::OptimizationSettings ret;
+ 
+-      return ret;
+-    }
+-  };
++            ret.mutable_window_increment()->CopyFrom(window_increment.DNA());
++            ret.mutable_window_multiple()->CopyFrom(window_multiple.DNA());
++            ret.mutable_intersend()->CopyFrom(intersend.DNA());
+ 
+-  static const OptimizationSettings & get_optimizer( void ) {
+-    static OptimizationSettings default_settings {
+-      { 0,    256, 1,    32,  4, 1 }, /* window increment */
+-      { 0,    1,   0.01, 0.5, 4, 1 }, /* window multiple */
+-      { 0.25, 3,   0.05, 1,   4, 3 } /* intersend */
++            return ret;
++        }
+     };
+-    return default_settings;
+-  }
++
++    static const OptimizationSettings& get_optimizer(void)
++    {
++        static OptimizationSettings default_settings{
++            {0, 256, 1, 32, 4, 1},   /* window increment */
++            {0, 1, 0.01, 0.5, 4, 1}, /* window multiple */
++            {0.25, 3, 0.05, 1, 4, 3} /* intersend */
++        };
++        return default_settings;
++    }
+ };
+ 
+ #endif
