@@ -1,0 +1,40 @@
+diff --git a/src/analysis/plot.py b/src/analysis/plot.py
+index 35c580e..ffc17a3 100755
+--- a/src/analysis/plot.py
++++ b/src/analysis/plot.py
+@@ -255,7 +255,7 @@ class Plot(object):
+                 symlog = True
+ 
+         if symlog:
+-            ax.set_xscale('symlog', basex=2, linthreshx=2, linscalex=0.5)
++            ax.set_xscale('symlog', base=2, linthresh=2, linscale=0.5)
+             ax.set_xlim(x_min, x_max)
+             ax.xaxis.set_major_formatter(ticker.FormatStrFormatter('%d'))
+ 
+diff --git a/src/experiments/data/bbr_datalink_delay_run1.png b/src/experiments/data/bbr_datalink_delay_run1.png
+index 11ca840..a4a88f0 100644
+Binary files a/src/experiments/data/bbr_datalink_delay_run1.png and b/src/experiments/data/bbr_datalink_delay_run1.png differ
+diff --git a/src/experiments/data/bbr_datalink_throughput_run1.png b/src/experiments/data/bbr_datalink_throughput_run1.png
+index d437699..566a608 100644
+Binary files a/src/experiments/data/bbr_datalink_throughput_run1.png and b/src/experiments/data/bbr_datalink_throughput_run1.png differ
+diff --git a/src/experiments/data/copa_datalink_delay_run1.png b/src/experiments/data/copa_datalink_delay_run1.png
+index 101fb8f..8f9071e 100644
+Binary files a/src/experiments/data/copa_datalink_delay_run1.png and b/src/experiments/data/copa_datalink_delay_run1.png differ
+diff --git a/src/experiments/data/copa_datalink_throughput_run1.png b/src/experiments/data/copa_datalink_throughput_run1.png
+index 2634641..18d1b81 100644
+Binary files a/src/experiments/data/copa_datalink_throughput_run1.png and b/src/experiments/data/copa_datalink_throughput_run1.png differ
+diff --git a/src/experiments/data/cubic_datalink_delay_run1.png b/src/experiments/data/cubic_datalink_delay_run1.png
+index 1a32a08..42c542a 100644
+Binary files a/src/experiments/data/cubic_datalink_delay_run1.png and b/src/experiments/data/cubic_datalink_delay_run1.png differ
+diff --git a/src/experiments/data/cubic_datalink_throughput_run1.png b/src/experiments/data/cubic_datalink_throughput_run1.png
+index 4aec155..8838ba5 100644
+Binary files a/src/experiments/data/cubic_datalink_throughput_run1.png and b/src/experiments/data/cubic_datalink_throughput_run1.png differ
+diff --git a/src/experiments/data/pantheon_perf.json b/src/experiments/data/pantheon_perf.json
+index 1714c5d..68b9069 100644
+--- a/src/experiments/data/pantheon_perf.json
++++ b/src/experiments/data/pantheon_perf.json
+@@ -1 +1 @@
+-{"copa": {"1": {"all": {"tput": 11.969546561572658, "delay": 570.204, "loss": 0.015501705469003091}, "1": {"tput": 11.969546561572658, "delay": 570.204, "loss": 0.015501705469003091}}}}
+\ No newline at end of file
++{"bbr": {"1": {"all": {"tput": 11.984018034279684, "delay": 16.123, "loss": 0.0003009618473118758}, "1": {"tput": 11.984018034279684, "delay": 16.123, "loss": 0.0003009618473118758}}}, "copa": {"1": {"all": {"tput": 11.969552675608755, "delay": 566.116, "loss": 0.01496413047170242}, "1": {"tput": 11.969552675608755, "delay": 566.116, "loss": 0.01496413047170242}}}, "cubic": {"1": {"all": {"tput": 11.999206340728714, "delay": 1713.581, "loss": 0.030582070324392974}, "1": {"tput": 11.999206340728714, "delay": 1713.581, "loss": 0.030582070324392974}}}}
+\ No newline at end of file
