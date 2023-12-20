@@ -10,17 +10,16 @@
                 "local",
                 "--schemes",
                 "bbr",
-                // "cubic",
-                // "--uplink-trace",
-                // "100mbps.trace",
-                // "--append-mm-cmds",
-                // "mm-delay 20"
+                "--uplink-trace",
+                "src/experiments/100mbps.trace",
+                "--append-mm-cmds",
+                "mm-delay 20"
             ],
             "console": "integratedTerminal",            // 默认值, 新建一个终端
         },
 
         {
-            "name": "Python: tunnel_manager.py.py",
+            "name": "Python: tunnel_manager.py",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/src/experiments/tunnel_manager.py",
@@ -46,7 +45,7 @@
         },
 
         {
-            "name": "Python: test.py bbr cubic",
+            "name": "Python: test.py copa",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/src/experiments/test.py",
@@ -54,6 +53,58 @@
                 "local",
                 "--schemes",
                 "copa",
+            ],
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
+
+        {
+            "name": "Python: indigo.run_sernder.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/third_party/indigo/dagger/run_sender.py",
+            "args": [
+                "46705",
+            ],
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
+
+
+        {
+            "name": "Python: test.py indigo",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/experiments/test.py",
+            "args": [
+                "local",
+                "--schemes",
+                "indigo",
+                "--uplink-trace",
+                "src/experiments/100mbps.trace",
+                "--append-mm-cmds",
+                "mm-delay 20"
+            ],
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
+
+        {
+            "name": "Python: indigo.py sender",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/wrappers/indigo.py",
+            "args": [
+                "sender",
+                "8500"
+            ],
+            "console": "integratedTerminal",            // 默认值, 新建一个终端
+        },
+
+        {
+            "name": "Indigo: run_sender.py sender",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/third_party/indigo/dagger/run_sender.py",
+            "args": [
+                "8500"
             ],
             "console": "integratedTerminal",            // 默认值, 新建一个终端
         },

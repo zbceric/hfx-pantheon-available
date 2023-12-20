@@ -201,7 +201,7 @@ class Test(object):
             self.run_second = None
 
         # wait for 3 seconds until run_first is ready                                         
-        self.run_first_setup_time = 3
+        self.run_first_setup_time = 20
 
         # setup output logs
         self.datalink_name = self.cc + '_datalink_run%d' % self.run_id              # 'bbr_datalink_run1'
@@ -456,19 +456,19 @@ class Test(object):
 
             recv_manager.stdin.write(first_cmd.encode('utf-8'))     # 将指令发送给 recv tunnel manage, 该指令被发送给 mm-tunnelserver, 调用 src/wrappers/bbr.py
             recv_manager.stdin.flush()                              # 每个算法都提供了启动流的方式, bbr 启动了 iperf server
-        elif self.run_first == 'sender':  # self.run_first == 'sender'
+        elif self.run_first == 'sender':                            # 接收端先运行
             if self.mode == 'remote':
                 if self.sender_side == 'local':
                     second_src = self.r['cc_src']
                 else:
                     first_src = self.r['cc_src']
 
-            port = utils.get_open_port()
+            port = utils.get_open_port()                            # 获取一个 port
 
             first_cmd = 'tunnel %s python %s sender %s\n' % (
-                tun_id, first_src, port)
+                tun_id, first_src, port)                            # sender 命令
             second_cmd = 'tunnel %s python %s receiver %s %s\n' % (
-                tun_id, second_src, send_pri_ip, port)
+                tun_id, second_src, send_pri_ip, port)              # receiver 命令
 
             send_manager.stdin.write(first_cmd.encode('utf-8'))
             send_manager.stdin.flush()
@@ -518,7 +518,7 @@ class Test(object):
 
     def run_second_side(self, send_manager, recv_manager, second_cmds):
         time.sleep(self.run_first_setup_time)
-        self.run_first = 'receiver'                     # run_first: receiver
+        # self.run_first = 'receiver'                     # run_first: receiver         ??? error: 不应该修改 run_first
         start_time = time.time()                        # 当前时间
         self.test_start_time = utils.utc_time()         # 获取 utc 时间
 

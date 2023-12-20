@@ -71,7 +71,7 @@ schemes:
     name: XNTP
     color: blue
     marker: 'D'
-  MixedTest:
-    name: mixed
-    color: violet
-    marker: o
+  # MixedTest:
+  #   name: mixed
+  #   color: violet
+  #   marker: o

@@ -1,0 +1,1663 @@
+diff --git a/dagger/dagger.py b/dagger/dagger.py
+index c4c74ab..088651c 100644
+--- a/dagger/dagger.py
++++ b/dagger/dagger.py
+@@ -28,15 +28,41 @@ from helpers.helpers import (
+     make_sure_path_exists, normalize, one_hot, curr_ts_ms)
+ from subprocess import check_output
+ 
+-
+-class Status:
+-    EP_DONE = 0
+-    WORKER_DONE = 1
+-    WORKER_START = 2
+-    PS_DONE = 3
+-
+-
+-class DaggerLeader(object):
++''' Indigo 是一个数据驱动的拥塞算法, 基于 LSTM 网络搭建, 采用模仿学习训练
++训练时, 看似采用了 ps/worker 结构, 实际上仍是在 ps 完成的了训练, worker 仅负责与环境交互产生样本数据
++Indigo 生成了一个预言机, 即给定网络条件, 预言机能够输出最优的 cwnd, Indigo 通过模仿学习来接近预言机的性能
++事实上, 预言机只能给出静态的 cwnd, 即给定网络条件, 预言机只能输出固定的 cwnd, 可以视为稳定时最佳的 cwnd, cwnd/RTT=bandwidth
++Indigo 学习的是如何得到这个 cwnd.
++DaggerLeader 是参数服务器, 它调用若干个 worker 节点生成数据.
++具体来说:
++1. DaggerLeader/DaggerWorker run, DaggerWorker 在初始化时接收的信息包括: 服务器集群信息, worker 运行的 Server, task id, env.
++   初始化时, DaggerWorker 将自身的 sample_action 与 env 绑定, env 则将该函数与 Sender 绑定
++2. DaggerLeader 向同步队列写入 WORKER_START.
++3. DaggerWorker 轮询读取到 WORKER_START, 执行 rollout (清空 env, 调用 env.rellout).
++4. env.rollout 调用了 Sender.run().
++5. Sender 发起一个 UDP 连接, 通过 poll 监听, Sender 不断统计数据, 每 10ms 调用一次 sample_action.
++   sample_action 是 env 的函数, 调用了 LSTM 并生成一个最佳的动作返回给 Sender, 同时从 expert 获取了静态的 best_cwnd,
++   这样就组合得到了训练样本, 并保存在了 buffer, 一个样本由两部分组成 [normal_state, one-hot action] [expert action].
++   在 sample_action 中, Sender 输入统计的状态量 state(归一化后是 normal_state, 就是原值除以一个大数)
++   然后将上一次选择的方案转换为 one-hot 向量, 与 normal_state 拼接.
++6. 在完成一次 rollout, 也就得到了一个批量的数据, DaggerWorker 将数据写入共享队列, 并将自身状态设置为 EP_DONE.
++7. DaggerLeader 不断遍历 worker 的同步队列, 检查到 EP_DONE 后就将 workers_ep_done + 1, 如果发现 WORKER_DONE, 就将其移出队列.
++8. 仍在队列中的 worker 都返回了 EP_DONE 后, 如果 workers_ep_done > 0, 就将全部数据取出用于训练.
++9. 训练在 DaggerLeader global 域下的 GPU 网络上进行, 结束后将参数同步到 global_cpu 域下的全局 CPU 网络, DaggerWorker 从该网络同步数据到本地的 local 网络.
++   训练是要初始化 batch size 个 state, 取 batch size 个组合好的 input 放到 state, 然后计算损失值.
++   Dagger 在连续 10 轮没有得到更低的 loss 时退出训练, 最多训练 50 轮,
++   max_loss 定义为本轮获得的最大 loss, min_loss 定位前面若干轮最小的 max_loss.
++Indigo 的思想是, 根据先验的环境信息计算最佳 cwnd, 训练 LSTM 网络, 快速到达这个 cwnd.
++'''
++
++class Status:               # 状态常量
++    EP_DONE = 0             # 当前 epoch 结束
++    WORKER_DONE = 1         # 当前 worker 结束
++    WORKER_START = 2        # 当前 worker 开始
++    PS_DONE = 3             # 当前 parameter server 结束
++
++
++class DaggerLeader(object):                         # ps, parameter server, 用于管理参数
+     def __init__(self, cluster, server, worker_tasks):
+         self.cluster = cluster
+         self.server = server
+@@ -51,65 +77,66 @@ class DaggerLeader(object):
+         self.regularization_lambda = 1e-4
+         self.train_step = 0
+ 
+-        self.state_dim = Sender.state_dim
+-        self.action_cnt = Sender.action_cnt
+-        self.aug_state_dim = self.state_dim + self.action_cnt
++        self.state_dim = Sender.state_dim                           # 网络状态的维度
++        self.action_cnt = Sender.action_cnt                         # 可选的动作数量
++        self.aug_state_dim = self.state_dim + self.action_cnt       # 输入维度 = x_{t} + h_{t-1}
+ 
+         # Create the master network and training/sync queues
+-        with tf.variable_scope('global'):
+-            self.global_network = DaggerLSTM(
++        with tf.variable_scope('global'):                           # 创建名为 global 的变量作用域, 若变量名称为 v, 则全称为: global/v:0
++            self.global_network = DaggerLSTM(                       # 创建一个 LSTM 网络
+                 state_dim=self.aug_state_dim, action_cnt=self.action_cnt)
+ 
+-        self.leader_device_cpu = '/job:ps/task:0/cpu:0'
+-        with tf.device(self.leader_device_cpu):
+-            with tf.variable_scope('global_cpu'):
+-                self.global_network_cpu = DaggerLSTM(
++        self.leader_device_cpu = '/job:ps/task:0/cpu:0'             # tensorflow 分布式运行, job:ps 服务器类型, task:0, 服务器第几台
++        with tf.device(self.leader_device_cpu):                     # 指定计算图的运行设备为 cpu
++            with tf.variable_scope('global_cpu'):                   # 创建名为 global_cpu 的变量作用域
++                self.global_network_cpu = DaggerLSTM(               # 创建一个 LSTM 网络
+                     state_dim=self.aug_state_dim, action_cnt=self.action_cnt)
+ 
+-        cpu_vars = self.global_network_cpu.trainable_vars
+-        gpu_vars = self.global_network.trainable_vars
++        cpu_vars = self.global_network_cpu.trainable_vars           # 获取训练变量
++        gpu_vars = self.global_network.trainable_vars               # 获取训练变量
+         self.sync_op = tf.group(*[v1.assign(v2) for v1, v2 in zip(
+-            cpu_vars, gpu_vars)])
++            cpu_vars, gpu_vars)])                                   # 从gpu网络的参数里取出参数赋值给cpu网络的对应参数
+ 
+         self.default_batch_size = 300
+         self.default_init_state = self.global_network.zero_init_state(
+-                self.default_batch_size)
++                self.default_batch_size)                            # 初值设置为 0, 每个batch 为 300
+ 
+         # Each element is [[aug_state]], [action]
+-        self.train_q = tf.FIFOQueue(
+-                self.num_workers, [tf.float32, tf.int32],
+-                shared_name='training_feed')
++        self.train_q = tf.FIFOQueue(                                # 先进先出队列, 队列长度是 worker 的数量
++                self.num_workers, [tf.float32, tf.int32],           # 每个元素是 [tf.float32, tf.int32] 类型的, 相当于存储了若干个样本
++                shared_name='training_feed')                        # 共享名称为 training_feed
+ 
+         # Keys: worker indices, values: Tensorflow messaging queues
+         # Queue Elements: Status message
+-        self.sync_queues = {}
++        self.sync_queues = {}                                       # 队列字典
+         for idx in worker_tasks:
+             queue_name = 'sync_q_%d' % idx
+-            self.sync_queues[idx] = tf.FIFOQueue(3, [tf.int16],
+-                                                 shared_name=queue_name)
++            self.sync_queues[idx] = tf.FIFOQueue(3, [tf.int16],     # 先进先出的消息队列, 可以存储的元素的最大数量为 3, 队列元素是一个int整数的列表
++                                                 shared_name=queue_name)    # 队列在不同session共享时使用的名称, worker设置相同的shared_name时即可获得该队列的引用
+ 
+-        self.setup_tf_ops(server)
++        self.setup_tf_ops(server)                                   # setup 张量操作
+ 
+-        self.sess = tf.Session(
+-            server.target, config=tf.ConfigProto(allow_soft_placement=True))
+-        self.sess.run(tf.global_variables_initializer())
++        self.sess = tf.Session(                                     # 创建一个会话, 当上下文管理器退出时自动完成会话关闭和资源释放
++            server.target, config=tf.ConfigProto(allow_soft_placement=True))    # 要连接的执行引擎, 配置tf.Session的运算方式
++                                                                    # allow_soft_placement=True: 那么当运行设备不满足要求时，会自动分配GPU或者CPU
++        self.sess.run(tf.global_variables_initializer())            # 初始化全局变量
+ 
+     def cleanup(self):
+         """ Sends messages to workers to stop and saves the model. """
+-        for idx in self.worker_tasks:
+-            self.sess.run(self.sync_queues[idx].enqueue(Status.PS_DONE))
++        for idx in self.worker_tasks:                               # 将消息发送给 workers, 并保存模型
++            self.sess.run(self.sync_queues[idx].enqueue(Status.PS_DONE))        # 运行入列操作, 其中 enqueue 返回一个操作, sess.run 负责执行 
+         self.save_model()
+ 
+     def save_model(self, checkpoint=None):
+-        """ Takes care of saving/checkpointing the model. """
++        """ Takes care of saving/checkpointing the model. """       # 保存模型
+         if checkpoint is None:
+-            model_path = path.join(self.logdir, 'model')
++            model_path = path.join(self.logdir, 'model')            # 保存最终模型的路径
+         else:
+-            model_path = path.join(self.logdir, 'checkpoint-%d' % checkpoint)
++            model_path = path.join(self.logdir, 'checkpoint-%d' % checkpoint)       # 保存 checkpoint 的路径
+ 
+         # save parameters to parameter server
+         saver = tf.train.Saver(self.global_network.trainable_vars)
+-        saver.save(self.sess, model_path)
++        saver.save(self.sess, model_path)                           # 保存模型到指定路径
+         sys.stderr.write('\nModel saved to param. server at %s\n' % model_path)
+ 
+     def setup_tf_ops(self, server):
+@@ -117,196 +144,196 @@ class DaggerLeader(object):
+         summary values, Tensorboard, and Session.
+         """
+ 
+-        self.actions = tf.placeholder(tf.int32, [None, None])
++        self.actions = tf.placeholder(tf.int32, [None, None])       # 动作的占位符
+ 
+         reg_loss = 0.0
+         for x in self.global_network.trainable_vars:
+             if x.name == 'global/cnt:0':
+                 continue
+-            reg_loss += tf.nn.l2_loss(x)
+-        reg_loss *= self.regularization_lambda
++            reg_loss += tf.nn.l2_loss(x)                            # 利用 L2 范数来计算张量的误差值, 各个元素平方和的平方根
++        reg_loss *= self.regularization_lambda                      # 正则化系数 1e-4
+ 
+-        cross_entropy_loss = tf.reduce_mean(
+-                tf.nn.sparse_softmax_cross_entropy_with_logits(
+-                    labels=self.actions,
+-                    logits=self.global_network.action_scores))
++        cross_entropy_loss = tf.reduce_mean(                        # 用于计算张量tensor沿着指定的数轴(tensor中的某一维度)上的平均值,
++                tf.nn.sparse_softmax_cross_entropy_with_logits(     # softmax 概率的交叉熵
++                    labels=self.actions,                            # 样本标签 (真实值)
++                    logits=self.global_network.action_scores))      # 未经激活函数和softmax放缩后的神经网络输出值, 定义在 DaggerLSTM
+ 
+-        self.total_loss = cross_entropy_loss + reg_loss
++        self.total_loss = cross_entropy_loss + reg_loss             # 总的误差
+ 
+-        optimizer = tf.train.AdamOptimizer(self.learn_rate)
+-        self.train_op = optimizer.minimize(self.total_loss)
++        optimizer = tf.train.AdamOptimizer(self.learn_rate)         # Adam 优化器
++        self.train_op = optimizer.minimize(self.total_loss)         # 训练操作: 最小化总损失
+ 
+-        tf.summary.scalar('reduced_ce_loss', cross_entropy_loss)
++        tf.summary.scalar('reduced_ce_loss', cross_entropy_loss)    # 记录数据, 用于可视化
+         tf.summary.scalar('reg_loss', reg_loss)
+         tf.summary.scalar('total_loss', self.total_loss)
+         self.summary_op = tf.summary.merge_all()
+ 
+-        git_commit = check_output(
+-                'cd %s && git rev-parse @' % project_root.DIR, shell=True)
++        git_commit = check_output(                                  # 执行一段指令
++                'cd %s && git rev-parse @' % project_root.DIR, shell=True)      # cd dir && 获取当前分支的 github 哈希值
+         date_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+-        log_name = date_time + '-%s' % git_commit.strip()
+-        self.logdir = path.join(project_root.DIR, 'dagger', 'logs', log_name)
+-        make_sure_path_exists(self.logdir)
+-        self.summary_writer = tf.summary.FileWriter(self.logdir)
++        log_name = date_time + '-%s' % git_commit.strip()           # 构建日志名称, 日期-分支哈希值
++        self.logdir = path.join(project_root.DIR, 'dagger', 'logs', log_name)   # 构建日志目录
++        make_sure_path_exists(self.logdir)                          # 创建日志目录
++        self.summary_writer = tf.summary.FileWriter(self.logdir)    # 写入日志信息
+ 
+-    def wait_on_workers(self):
++    def wait_on_workers(self):                                  # 采用同步方式训练, 等待同步, 更新哪些节点完成了训练, 哪些节点
+         """ Update which workers are done or dead. Stale tokens will
+         eventually be cleaned out.
+         Returns the number of workers that finished their episode.
+         """
+-        workers_ep_done = 0
+-        while workers_ep_done < len(self.worker_tasks):
++        workers_ep_done = 0                                             # 循环, 发现 1 个 worker 完成训练就将 workers_ep_done + 1, 如果发现 worker 挂掉了就移除
++        while workers_ep_done < len(self.worker_tasks):                 # 小于 worker 数量
+             # Let the workers dequeue their start tokens
+-            time.sleep(0.5)
++            time.sleep(0.5)                                             # sleep 0.5s 等待
+ 
+             # check in each queue for worker messages and update workers
+-            workers_done = []
+-            for idx in self.worker_tasks:
+-                worker_queue = self.sync_queues[idx]
+-                msg = self.sess.run(worker_queue.dequeue())
++            workers_done = []                                           # 检查每个队列的 worker message, 更新 worker
++            for idx in self.worker_tasks:                               # 顺序遍历 task 编号
++                worker_queue = self.sync_queues[idx]                    # 从 worker 对应的同步队列中取出一条指令
++                msg = self.sess.run(worker_queue.dequeue())             # 组装得到 msg
+ 
+-                if msg == Status.EP_DONE:
+-                    workers_ep_done += 1
++                if msg == Status.EP_DONE:                               # 如果是 epoch done
++                    workers_ep_done += 1                                # 完成的worker数量 + 1
+                 elif msg == Status.WORKER_DONE:
+-                    workers_done.append(idx)
+-                    self.sess.run(worker_queue.close())
++                    workers_done.append(idx)                            # 记录结束的 worker
++                    self.sess.run(worker_queue.close())                 # 关闭队列
+                 else:
+-                    self.sess.run(worker_queue.enqueue(msg))
++                    self.sess.run(worker_queue.enqueue(msg))            # 重新把 msg 入队
+ 
+             for worker in workers_done:
+-                self.worker_tasks.remove(worker)
++                self.worker_tasks.remove(worker)                        # 移除已经 done 掉的 worker
+ 
+-        return workers_ep_done
++        return workers_ep_done                                          # 返回 epoch 完成的 worker 数量
+ 
+-    def run_one_train_step(self, batch_states, batch_actions):
++    def run_one_train_step(self, batch_states, batch_actions):   # 训练一个 batch size 的数据 (输入, 输出)
+         """ Runs one step of the training operator on the given data.
+         At times will update Tensorboard and save a checkpointed model.
+         Returns the total loss calculated.
+         """
+ 
+-        summary = True if self.train_step % 10 == 0 else False
++        summary = True if self.train_step % 10 == 0 else False          # 每10个epoch输出一次数据
+ 
+-        ops_to_run = [self.train_op, self.total_loss]
++        ops_to_run = [self.train_op, self.total_loss]                   # 运行一次 train ops [tf.train.AdamOptimizer(self.learn_rate).minimize(self.total_loss)]
+ 
+         if summary:
+             ops_to_run.append(self.summary_op)
+ 
+-        pi = self.global_network
++        pi = self.global_network                                        # LSTM 模型
+ 
+-        start_ts = curr_ts_ms()
+-        ret = self.sess.run(ops_to_run, feed_dict={
+-            pi.input: batch_states,
++        start_ts = curr_ts_ms()                                         # 当前时间
++        ret = self.sess.run(ops_to_run, feed_dict={                     # 注意, 在 tensorflow 中, 计算以图形式存在, feed_dict 是指数据替换
++            pi.input: batch_states,                                     
+             self.actions: batch_actions,
+-            pi.state_in: self.init_state})
++            pi.state_in: self.init_state})                              # 运行优化器, 生成参数更新
+ 
+-        elapsed = (curr_ts_ms() - start_ts) / 1000.0
++        elapsed = (curr_ts_ms() - start_ts) / 1000.0                    # 训练使用的时间
+         sys.stderr.write('train step %d: time %.2f\n' %
+                          (self.train_step, elapsed))
+ 
+         if summary:
+             self.summary_writer.add_summary(ret[2], self.train_step)
+ 
+-        return ret[1]
++        return ret[1]                                                   # total_loss ???
+ 
+-    def train(self):
++    def train(self):            # 运行操作符, 直到网络收敛
+         """ Runs the training operator until the loss converges.
+         """
+         curr_iter = 0
+ 
+-        min_loss = float('inf')
+-        iters_since_min_loss = 0
++        min_loss = float('inf')                                         # 正无穷
++        iters_since_min_loss = 0                                        # 记录距离上一个 min_loss 过了几个 epoch
+ 
+-        batch_size = min(len(self.aggregated_states), self.default_batch_size)
+-        num_batches = len(self.aggregated_states) / batch_size
++        batch_size = min(len(self.aggregated_states), self.default_batch_size)      #用于训练的样本数量
++        num_batches = len(self.aggregated_states) / batch_size          # 计算一个 epoch 有几个 batch
+ 
+-        if batch_size != self.default_batch_size:
+-            self.init_state = self.global_network.zero_init_state(batch_size)
++        if batch_size != self.default_batch_size:                       # 默认 batch size 为 300
++            self.init_state = self.global_network.zero_init_state(batch_size)       # 如果 batch size 不是默认值, 就使用网络的初始化
+         else:
+-            self.init_state = self.default_init_state
++            self.init_state = self.default_init_state                   # 如果是初始值, 就使用默认值
+ 
+-        while True:
+-            curr_iter += 1
++        while True:                                                     # 训练...
++            curr_iter += 1                                              # 轮次 + 1
+ 
+             mean_loss = 0.0
+             max_loss = 0.0
+ 
+-            for batch_num in xrange(num_batches):
++            for batch_num in range(num_batches):                        # 取一个batch数据训练
+                 self.train_step += 1
+ 
+-                start = batch_num * batch_size
++                start = batch_num * batch_size                          # 计算batch的起止位置
+                 end = start + batch_size
+ 
+-                batch_states = self.aggregated_states[start:end]
+-                batch_actions = self.aggregated_actions[start:end]
++                batch_states = self.aggregated_states[start:end]        # 获得网络状态 (训练数据输入)
++                batch_actions = self.aggregated_actions[start:end]      # 获得最佳动作 (训练数据输出)
+ 
+-                loss = self.run_one_train_step(batch_states, batch_actions)
++                loss = self.run_one_train_step(batch_states, batch_actions)     # 训练一个 batch, 计算损失值
+ 
+                 mean_loss += loss
+-                max_loss = max(loss, max_loss)
++                max_loss = max(loss, max_loss)                          # 记录 epoch 中遇到的最大 loss
+ 
+-            mean_loss /= num_batches
++            mean_loss /= num_batches                                    # 平均 loss
+ 
+             sys.stderr.write('--- iter %d: max loss %.4f, mean loss %.4f\n' %
+                              (curr_iter, max_loss, mean_loss))
+ 
+-            if max_loss < min_loss - 0.001:
+-                min_loss = max_loss
+-                iters_since_min_loss = 0
++            if max_loss < min_loss - 0.001:                             # 这个 epoch 的最大 loss 比之前所有 epoch 的最小 loss 还要小
++                min_loss = max_loss                                     # 更新 min_loss
++                iters_since_min_loss = 0                                # 重置 iters_since_min_loss
+             else:
+-                iters_since_min_loss += 1
++                iters_since_min_loss += 1                               # 否则 iters_since_min_loss + 1
+ 
+-            if curr_iter > 50:
++            if curr_iter > 50:                                          # 运行了50轮结束
+                 break
+ 
+-            if iters_since_min_loss >= max(0.2 * curr_iter, 10):
+-                break
++            if iters_since_min_loss >= max(0.2 * curr_iter, 10):        # 令 it = max(0.2 * curr_iter, 10), 如果超过 it 轮没见到更好的 loss, 就说明训练方向不对
++                break                                                   # 退出
+ 
+-        self.sess.run(self.global_network.add_one)
++        self.sess.run(self.global_network.add_one)                      # 模型中的 cnt 变量自增 1
+ 
+         # copy trained variables from GPU to CPU
+-        self.sess.run(self.sync_op)
++        self.sess.run(self.sync_op)                                     # 将参数从 GPU 中拷贝的 CPU 中
+ 
+-        print 'DaggerLeader:global_network:cnt', self.sess.run(self.global_network.cnt)
+-        print 'DaggerLeader:global_network_cpu:cnt', self.sess.run(self.global_network_cpu.cnt)
+-        sys.stdout.flush()
++        print('DaggerLeader:global_network:cnt', self.sess.run(self.global_network.cnt))
++        print('DaggerLeader:global_network_cpu:cnt', self.sess.run(self.global_network_cpu.cnt))
++        sys.stdout.flush()                                              # 刷新 sys 输出
+ 
+-    def run(self, debug=False):
+-        for curr_ep in xrange(self.max_eps):
++    def run(self, debug=False):                                 # 运行 ps.server
++        for curr_ep in range(self.max_eps):                             # 1000 个 episode
+             if debug:
+                 sys.stderr.write('[PSERVER EP %d]: waiting for workers %s\n' %
+-                                 (curr_ep, self.worker_tasks))
++                                 (curr_ep, self.worker_tasks))          # 打印 debug 信息
+ 
+-            workers_ep_done = self.wait_on_workers()
++            workers_ep_done = self.wait_on_workers()                    # 等待 workers 完成计算, 返回值是完成 episode 的 worker 数量
+ 
+             # If workers had data, dequeue ALL the samples and train
+-            if workers_ep_done > 0:
+-                while True:
+-                    num_samples = self.sess.run(self.train_q.size())
++            if workers_ep_done > 0:                                     # 意味着不是所有 worker 都是 WORKER_DONE 状态
++                while True:                                             # ! 取出 training_feed FIFO queue 中的全部样本, 记录到 aggregated_states 和 aggregated_actions
++                    num_samples = self.sess.run(self.train_q.size())    # 样本数量
+                     if num_samples == 0:
+                         break
+ 
+-                    data = self.sess.run(self.train_q.dequeue())
+-                    self.aggregated_states.append(data[0])
+-                    self.aggregated_actions.append(data[1])
++                    data = self.sess.run(self.train_q.dequeue())        # 取出一个样本
++                    self.aggregated_states.append(data[0])              # 输入
++                    self.aggregated_actions.append(data[1])             # 输出
+ 
+                 if debug:
+                     sys.stderr.write('[PSERVER]: start training\n')
+ 
+-                self.train()
++                self.train()                                            # Dagger 训练
+             else:
+                 if debug:
+                     sys.stderr.write('[PSERVER]: quitting...\n')
+                 break
+ 
+             # Save the network model for testing every so often
+-            if curr_ep == self.checkpoint:
+-                self.save_model(curr_ep)
++            if curr_ep == self.checkpoint:                              # 记录 checkpoint
++                self.save_model(curr_ep)                                # 保存当前 episode 训练得到的模型
+                 self.checkpoint += self.checkpoint_delta
+ 
+             # After training, tell workers to start another episode
+-            for idx in self.worker_tasks:
+-                worker_queue = self.sync_queues[idx]
+-                self.sess.run(worker_queue.enqueue(Status.WORKER_START))
++            for idx in self.worker_tasks:                               # 变量 worker task
++                worker_queue = self.sync_queues[idx]                    # 取得队列引用
++                self.sess.run(worker_queue.enqueue(Status.WORKER_START))# 向队列写入状态量 告知 worker 启动
+ 
+ 
+ class DaggerWorker(object):
+@@ -315,9 +342,9 @@ class DaggerWorker(object):
+         self.cluster = cluster
+         self.env = env
+         self.task_idx = task_idx
+-        self.leader_device = '/job:ps/task:0'
+-        self.worker_device = '/job:worker/task:%d' % task_idx
+-        self.num_workers = cluster.num_tasks('worker')
++        self.leader_device = '/job:ps/task:0'                       # ps, 只能使用一个 ps
++        self.worker_device = '/job:worker/task:%d' % task_idx       # workers, 允许多个 worker 生成数据
++        self.num_workers = cluster.num_tasks('worker')              # 获取 worker 的数量
+ 
+         # Buffers and parameters required to train
+         self.curr_ep = 0
+@@ -326,22 +353,22 @@ class DaggerWorker(object):
+         self.state_dim = env.state_dim
+         self.action_cnt = env.action_cnt
+ 
+-        self.aug_state_dim = self.state_dim + self.action_cnt
++        self.aug_state_dim = self.state_dim + self.action_cnt       # 输入的维度
+         self.prev_action = self.action_cnt - 1
+ 
+-        self.expert = TrueDaggerExpert(env)
++        self.expert = TrueDaggerExpert(env)                         # 专家, 似乎 best_cwnd 是静态的 ???
+         # Must call env.set_sample_action() before env.rollout()
+-        env.set_sample_action(self.sample_action)
++        env.set_sample_action(self.sample_action)                   # 回调函数        
+ 
+         # Set up Tensorflow for synchronization, training
+         self.setup_tf_ops()
+         self.sess = tf.Session(
+-            server.target, config=tf.ConfigProto(allow_soft_placement=True))
+-        self.sess.run(tf.global_variables_initializer())
++            server.target, config=tf.ConfigProto(allow_soft_placement=True))        # 启动一个 session
++        self.sess.run(tf.global_variables_initializer())            # 初始化参数
+ 
+     def cleanup(self):
+-        self.env.cleanup()
+-        self.sess.run(self.sync_q.enqueue(Status.WORKER_DONE))
++        self.env.cleanup()                                          # 每个 worker 用于一个环境, 结束时清理这个环境
++        self.sess.run(self.sync_q.enqueue(Status.WORKER_DONE))      # 同步队列, 告知 worker done 了
+ 
+     def setup_tf_ops(self):
+         """ Sets up the shared Tensorflow operators and structures
+@@ -349,8 +376,8 @@ class DaggerWorker(object):
+         """
+ 
+         # Set up the shared global network and local network.
+-        with tf.device(self.leader_device):
+-            with tf.variable_scope('global_cpu'):
++        with tf.device(self.leader_device):                         # worker 与 leader 一样, 都维护了 cpu 和 gpu 两个模型
++            with tf.variable_scope('global_cpu'):                   # 在 gpu 训练后, 把参数交给 cpu 去和 leader(ps) 同步
+                 self.global_network_cpu = DaggerLSTM(
+                     state_dim=self.aug_state_dim, action_cnt=self.action_cnt)
+ 
+@@ -359,82 +386,82 @@ class DaggerWorker(object):
+                 self.local_network = DaggerLSTM(
+                     state_dim=self.aug_state_dim, action_cnt=self.action_cnt)
+ 
+-        self.init_state = self.local_network.zero_init_state(1)
+-        self.lstm_state = self.init_state
++        self.init_state = self.local_network.zero_init_state(1)     # 初始化
++        self.lstm_state = self.init_state                           # LSTM 的初始状态
+ 
+         # Build shared queues for training data and synchronization
+         self.train_q = tf.FIFOQueue(
+-                self.num_workers, [tf.float32, tf.int32],
+-                shared_name='training_feed')
++                self.num_workers, [tf.float32, tf.int32],           # 共享队列, 维护各个
++                shared_name='training_feed')                        # 训练的 worker, 这是一个
+ 
+         self.sync_q = tf.FIFOQueue(3, [tf.int16],
+-                shared_name=('sync_q_%d' % self.task_idx))
++                shared_name=('sync_q_%d' % self.task_idx))          # 同步队列
+ 
+         # Training data is [[aug_state]], [action]
+-        self.state_data = tf.placeholder(
++        self.state_data = tf.placeholder(                           # 占位符, 聚合后的状态 (输入)
+                 tf.float32, shape=(None, self.aug_state_dim))
+-        self.action_data = tf.placeholder(tf.int32, shape=(None))
++        self.action_data = tf.placeholder(tf.int32, shape=(None))   # 占位符, 最佳动作 (输出)
+         self.enqueue_train_op = self.train_q.enqueue(
+-                [self.state_data, self.action_data])
++                [self.state_data, self.action_data])                # 将生成的训练数据集入队
+ 
+         # Sync local network to global network (CPU)
+         local_vars = self.local_network.trainable_vars
+         global_vars = self.global_network_cpu.trainable_vars
+         self.sync_op = tf.group(*[v1.assign(v2) for v1, v2 in zip(
+-            local_vars, global_vars)])
++            local_vars, global_vars)])                              # 将 v2 赋值给 v1, 即从 CPU 获取同步后的网络
+ 
+-    def sample_action(self, state):
++    def sample_action(self, state):         # 接收上一个时间步的状态向量, 返回一个 action 的索引
+         """ Given a state buffer in the past step, returns an action
+         to perform.
+ 
+         Appends to the state/action buffers the state and the
+         "correct" action to take according to the expert.
+         """
+-        cwnd = state[self.state_dim - 1]
+-        expert_action = self.expert.sample_action(cwnd)
++        cwnd = state[self.state_dim - 1]                    # last cwnd
++        expert_action = self.expert.sample_action(cwnd)     # 获取专家 action
+ 
+         # For decision-making, normalize.
+-        norm_state = normalize(state)
++        norm_state = normalize(state)                       # 归一化
+ 
+-        one_hot_action = one_hot(self.prev_action, self.action_cnt)
+-        aug_state = norm_state + one_hot_action
++        one_hot_action = one_hot(self.prev_action, self.action_cnt)    # LSTM 输出概率向量, softmax 选择概率最高的向量, 再生成 one-hot 向量
++        aug_state = norm_state + one_hot_action             # 将隐藏状态归一化后与 one-hot 向量拼接, 得到一个输入样本
+ 
+         # Fill in state_buf, action_buf
+-        self.state_buf.append(aug_state)
+-        self.action_buf.append(expert_action)
++        self.state_buf.append(aug_state)                    # 记录输入样本
++        self.action_buf.append(expert_action)               # 记录专家输出, 得到一个完整的样本
+ 
+         # Always use the expert on the first episode to get our bearings.
+-        if self.curr_ep == 0:
+-            self.prev_action = expert_action
++        if self.curr_ep == 0:                               # 第一个 epoch
++            self.prev_action = expert_action                # 将 prev_action 设置为 expert action
+             return expert_action
+ 
+         # Get probability of each action from the local network.
+-        pi = self.local_network
++        pi = self.local_network                             # 获取 LSTM 模型
+         feed_dict = {
+-            pi.input: [[aug_state]],
+-            pi.state_in: self.lstm_state,
++            pi.input: [[aug_state]],                        # 训练数据
++            pi.state_in: self.lstm_state,                   # (c_in, h_in)
+         }
+-        ops_to_run = [pi.action_probs, pi.state_out]
++        ops_to_run = [pi.action_probs, pi.state_out]        # pi.state_out 是 LSTM 输出的各个动作的评分, pi.action_probs 将 rnn 输出映射
+         action_probs, self.lstm_state = self.sess.run(ops_to_run, feed_dict)
+ 
+         # Choose an action to take and update current LSTM state
+         # action = np.argmax(np.random.multinomial(1, action_probs[0][0] - 1e-5))
+-        action = np.argmax(action_probs[0][0])
+-        self.prev_action = action
++        action = np.argmax(action_probs[0][0])              # 选择评分最高的 action
++        self.prev_action = action                           # 赋值给 prev_action
+ 
+-        return action
++        return action                                       # 返回 action
+ 
+-    def rollout(self):
++    def rollout(self):                              # 调用生成的环境, 环境发起一条流, 完成一次交互, 获取过程中的信息
+         """ Start an episode/flow with an empty dataset/environment. """
+         self.state_buf = []
+         self.action_buf = []
+-        self.prev_action = self.action_cnt - 1
++        self.prev_action = self.action_cnt - 1              # 交互前, 将action设置为最后一个
+         self.lstm_state = self.init_state
+ 
+-        self.env.reset()
++        self.env.reset()                                    
+         self.env.rollout()
+ 
+-    def run(self, debug=False):
++    def run(self, debug=False):                     # 运行 worker 节点
+         """Runs for max_ep episodes, each time sending data to the leader."""
+ 
+         pi = self.local_network
+@@ -444,14 +471,14 @@ class DaggerWorker(object):
+                                  (self.task_idx, self.curr_ep))
+ 
+             # Reset local parameters to global
+-            self.sess.run(self.sync_op)
++            self.sess.run(self.sync_op)                     # 从 global 网络中获取参数到本地
+ 
+-            print 'DaggerWorker:global_network_cpu:cnt', self.sess.run(self.global_network_cpu.cnt)
+-            print 'DaggerWorker:local_network:cnt', self.sess.run(self.local_network.cnt)
++            print('DaggerWorker:global_network_cpu:cnt', self.sess.run(self.global_network_cpu.cnt))
++            print('DaggerWorker:local_network:cnt', self.sess.run(self.local_network.cnt))
+             sys.stdout.flush()
+ 
+             # Start a single episode, populating state-action buffers.
+-            self.rollout()
++            self.rollout()                                  # 交互, 生成样本数据
+ 
+             if debug:
+                 queue_size = self.sess.run(self.train_q.size())
+@@ -463,8 +490,8 @@ class DaggerWorker(object):
+             # Enqueue a sequence of data into the training queue.
+             self.sess.run(self.enqueue_train_op, feed_dict={
+                 self.state_data: self.state_buf,
+-                self.action_data: self.action_buf})
+-            self.sess.run(self.sync_q.enqueue(Status.EP_DONE))
++                self.action_data: self.action_buf})                 # 将训练数据进队
++            self.sess.run(self.sync_q.enqueue(Status.EP_DONE))      # 告知 ps epoch done
+ 
+             if debug:
+                 queue_size = self.sess.run(self.train_q.size())
+@@ -478,17 +505,17 @@ class DaggerWorker(object):
+                                  (self.task_idx, self.curr_ep))
+ 
+             # Let the leader dequeue EP_DONE
+-            time.sleep(0.5)
++            time.sleep(0.5)                                         # 等待 ps 取出信息
+ 
+             # Wait until pserver finishes training by blocking on sync_q
+             # Only proceeds when it finds a message from the pserver.
+-            msg = self.sess.run(self.sync_q.dequeue())
+-            while (msg != Status.WORKER_START and msg != Status.PS_DONE):
+-                self.sess.run(self.sync_q.enqueue(msg))
+-                time.sleep(0.5)
++            msg = self.sess.run(self.sync_q.dequeue())              # 取出信息
++            while (msg != Status.WORKER_START and msg != Status.PS_DONE):       # 参数信息不是 WORKER_START 和 PS_DONE
++                self.sess.run(self.sync_q.enqueue(msg))             # 说明 EP_DONE 尚未被处理, 重新入队等待处理
++                time.sleep(0.5)                                     # 睡眠 等待 ps 处理
+                 msg = self.sess.run(self.sync_q.dequeue())
+ 
+-            if msg == Status.PS_DONE:
++            if msg == Status.PS_DONE:                               # 训练结束
+                 break
+ 
+-            self.curr_ep += 1
++            self.curr_ep += 1                                       # episode + 1
+diff --git a/dagger/experts.py b/dagger/experts.py
+index 8d63d9c..1665039 100644
+--- a/dagger/experts.py
++++ b/dagger/experts.py
+@@ -17,25 +17,25 @@ from env.sender import Sender
+ from helpers.helpers import apply_op
+ 
+ 
+-def action_error(actions, idx, cwnd, target):
++def action_error(actions, idx, cwnd, target):           # cwnd, 目标 action, 目标 cwnd
+     """ Returns the absolute difference between the target and an action
+     applied to the cwnd.
+     The action is [op, val] located at actions[idx].
+     """
+-    op = actions[idx][0]
+-    val = actions[idx][1]
+-    return abs(apply_op(op, cwnd, val) - target)
++    op = actions[idx][0]                                        # 获取操作符 /, +, ...
++    val = actions[idx][1]                                       # 获取操作数 2, 1, ...
++    return abs(apply_op(op, cwnd, val) - target)                # 执行 action, 返回和目标之间的绝对差值
+ 
+ 
+ def get_best_action(actions, cwnd, target):
+     """ Returns the best action by finding the action that leads to the
+     closest resulting cwnd to target.
+     """
+-    return min(actions,
++    return min(actions,                                         # 遍历 action, 选择最接近目标 cwnd 的 action
+                key=lambda idx: action_error(actions, idx, cwnd, target))
+ 
+ 
+-class NaiveDaggerExpert(object):
++class NaiveDaggerExpert(object):                                # 将 LEDBAT 作为专家来学习
+     """ Naive modified LEDBAT implementation """
+ 
+     def __init__(self):
+@@ -54,7 +54,7 @@ class NaiveDaggerExpert(object):
+         # Gets the action that gives the resulting cwnd closest to the
+         # expert target cwnd.
+         action = get_best_action(Sender.action_mapping, cwnd, target_cwnd)
+-        return action
++        return action                                           # 返回最佳动作 
+ 
+ class TrueDaggerExpert(object):
+     """ Ground truth expert policy """
+@@ -63,10 +63,10 @@ class TrueDaggerExpert(object):
+         assert hasattr(env, 'best_cwnd'), ('Using true dagger expert but not '
+                                            'given a best cwnd when creating '
+                                            'the environment in worker.py.')
+-        self.best_cwnd = env.best_cwnd
++        self.best_cwnd = env.best_cwnd              # 从环境中获取最佳 cwnd
+ 
+     def sample_action(self, cwnd):
+         # Gets the action that gives the resulting cwnd closest to the
+         # best cwnd.
+-        action = get_best_action(Sender.action_mapping, cwnd, self.best_cwnd)
+-        return action
++        action = get_best_action(Sender.action_mapping, cwnd, self.best_cwnd)   
++        return action                               # 选择最佳 action, 外界已经写入了 best_cwnd, 只需要找到哪个 action 最接近 best_cwnd
+diff --git a/dagger/models.py b/dagger/models.py
+index 2ef8229..fc13c6c 100644
+--- a/dagger/models.py
++++ b/dagger/models.py
+@@ -20,70 +20,70 @@ from tensorflow.contrib import layers, rnn
+ 
+ class DaggerNetwork(object):
+     def __init__(self, state_dim, action_cnt):
+-        self.states = tf.placeholder(tf.float32, [None, state_dim])
++        self.states = tf.placeholder(tf.float32, [None, state_dim])     # 浮点数占位符
+ 
+-        actor_h1 = layers.relu(self.states, 8)
+-        actor_h2 = layers.relu(actor_h1, 8)
+-        self.action_scores = layers.linear(actor_h2, action_cnt)
++        actor_h1 = layers.relu(self.states, 8)                          # 激活函数为 relu 的全连接层, 输出维度为 8
++        actor_h2 = layers.relu(actor_h1, 8)                             # 激活函数为 relu 的全连接层, 输出维度为 8
++        self.action_scores = layers.linear(actor_h2, action_cnt)        # 全连接层, 输出维度为 action_cnt
+         self.action_probs = tf.nn.softmax(self.action_scores,
+-                                          name='action_probs')
++                                          name='action_probs')          # 通过 softmax 选择最佳的动作, relu 全连接层 * 2 + softmax 全连接层
+ 
+         self.trainable_vars = tf.get_collection(
+             tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name)
+ 
+ 
+ class DaggerLSTM(object):
+-    def __init__(self, state_dim, action_cnt):
++    def __init__(self, state_dim, action_cnt):          # 接收两个参数, state维度和action数量
+         # dummy variable used to verify that sharing variables is working
+         self.cnt = tf.get_variable(
+             'cnt', [], tf.float32,
+-            initializer=tf.constant_initializer(0.0))
+-        self.add_one = self.cnt.assign_add(1.0)
++            initializer=tf.constant_initializer(0.0))           # 创建一个初值为 0.0 的变量 cnt
++        self.add_one = self.cnt.assign_add(1.0)                 # cnt 自增 1.0
+ 
+         # self.input: [batch_size, max_time, state_dim]
+-        self.input = tf.placeholder(tf.float32, [None, None, state_dim])
++        self.input = tf.placeholder(tf.float32, [None, None, state_dim])    # 创建一个占位符, 数据是 float32, 允许输入任意批次的数据, 维度为 state_dim
+ 
+-        self.num_layers = 1
+-        self.lstm_dim = 32
++        self.num_layers = 1         # LSTM 层数为 1
++        self.lstm_dim = 32          # LSTM 维度为 32
+         stacked_lstm = rnn.MultiRNNCell([rnn.BasicLSTMCell(self.lstm_dim)
+-            for _ in xrange(self.num_layers)])
++            for _ in range(self.num_layers)])           # 创建一个多层堆叠的LSTM单元，使用rnn.BasicLSTMCell作为基本的LSTM单元
+ 
+         self.state_in = []
+         state_tuple_in = []
+-        for _ in xrange(self.num_layers):
+-            c_in = tf.placeholder(tf.float32, [None, self.lstm_dim])
+-            h_in = tf.placeholder(tf.float32, [None, self.lstm_dim])
+-            self.state_in.append((c_in, h_in))
+-            state_tuple_in.append(rnn.LSTMStateTuple(c_in, h_in))
++        for _ in range(self.num_layers):
++            c_in = tf.placeholder(tf.float32, [None, self.lstm_dim])        # 为每层LSTM生成一个占位符, 实际只有 1 层
++            h_in = tf.placeholder(tf.float32, [None, self.lstm_dim])        # c 是神经元状态(长时记忆), h 是隐藏状态(短时记忆)
++            self.state_in.append((c_in, h_in))                              # 浅拷贝, 全部状态都被记录在 self.state_in
++            state_tuple_in.append(rnn.LSTMStateTuple(c_in, h_in))           # LSTMStateTuple 是一个用于操作各个时间步的 h & c 的数据结构
+ 
+-        self.state_in = tuple(self.state_in)
++        self.state_in = tuple(self.state_in)                                # 将 list 转为不可变的 tuple
+         state_tuple_in = tuple(state_tuple_in)
+ 
+-        # self.output: [batch_size, max_time, lstm_dim]
+-        output, state_tuple_out = tf.nn.dynamic_rnn(
+-            stacked_lstm, self.input, initial_state=state_tuple_in)
++        # self.output: [batch_size, max_time, lstm_dim]                     # output 是输出向量, state_tuple_out 是 RNN 的最终状态
++        output, state_tuple_out = tf.nn.dynamic_rnn(                        # 生成一个 rnn, stacked_lstm 是 rnn 实例
++            stacked_lstm, self.input, initial_state=state_tuple_in)         # input 是 输入占位符(输入格式), initial_state 是初始状态
+ 
+-        self.state_out = self.convert_state_out(state_tuple_out)
++        self.state_out = self.convert_state_out(state_tuple_out)            # 获取状态指针
+ 
+         # map output to scores
+-        self.action_scores = layers.linear(output, action_cnt)
+-        self.action_probs = tf.nn.softmax(self.action_scores)
++        self.action_scores = layers.linear(output, action_cnt)              # 全连接层, 将 rnn 的输出 output 映射为每个 action 的评分向量
++        self.action_probs = tf.nn.softmax(self.action_scores)               # 通过 softmax 函数选择最佳的动作, 注意, 这里直接封装了 action_scores, 因此 action_probs 直接将 rnn 输出映射到了 softmax
+ 
+-        self.trainable_vars = tf.get_collection(
+-            tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name)
++        self.trainable_vars = tf.get_collection(                            # 从一个集合中取出变量, 方便用户取出某个变量
++            tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name) # 声明时参数 trainable 为 True 的所有变量都会自动被加入 tf.GraphKeys.TRAINABLE_VARIABLES 中
+ 
+     def convert_state_out(self, state_tuple_out):
+         state_out = []
+         for lstm_state_tuple in state_tuple_out:
+-            state_out.append((lstm_state_tuple.c, lstm_state_tuple.h))
++            state_out.append((lstm_state_tuple.c, lstm_state_tuple.h))      # 状态被存储在 state_tuple_out 中
+ 
+-        return tuple(state_out)
++        return tuple(state_out)                                             # 依次解析并构建一个元组 [(c0, h0), (c1, h1), ...]
+ 
+     def zero_init_state(self, batch_size):
+         init_state = []
+-        for _ in xrange(self.num_layers):
+-            c_init = np.zeros([batch_size, self.lstm_dim], np.float32)
+-            h_init = np.zeros([batch_size, self.lstm_dim], np.float32)
++        for _ in range(self.num_layers):
++            c_init = np.zeros([batch_size, self.lstm_dim], np.float32)      # 初始化全部状态为 0 向量
++            h_init = np.zeros([batch_size, self.lstm_dim], np.float32)      
+             init_state.append((c_init, h_init))
+ 
+         return init_state
+diff --git a/dagger/run_sender.py b/dagger/run_sender.py
+index 655fed3..b727fe9 100755
+--- a/dagger/run_sender.py
++++ b/dagger/run_sender.py
+@@ -20,10 +20,13 @@ import project_root
+ import numpy as np
+ import tensorflow as tf
+ from os import path
+-from env.sender import Sender
++from env.sender2 import Sender
+ from models import DaggerLSTM
+ from helpers.helpers import normalize, one_hot, softmax
+ 
++'''run_sender.py 只是用来运行一个 Sender, 而非训练, 它从指定位置加载了模型, 然后运行
++'''
++
+ 
+ class Learner(object):
+     def __init__(self, state_dim, action_cnt, restore_vars):
+@@ -33,25 +36,25 @@ class Learner(object):
+ 
+         with tf.variable_scope('global'):
+             self.model = DaggerLSTM(
+-                state_dim=self.aug_state_dim, action_cnt=action_cnt)
++                state_dim=self.aug_state_dim, action_cnt=action_cnt)        # 生成一个 LSTM 网络
+ 
+-        self.lstm_state = self.model.zero_init_state(1)
++        self.lstm_state = self.model.zero_init_state(1)                     # 初始化, batch size = 1
+ 
+-        self.sess = tf.Session()
++        self.sess = tf.Session()                                            # 新建一个 session
+ 
+         # restore saved variables
+         saver = tf.train.Saver(self.model.trainable_vars)
+-        saver.restore(self.sess, restore_vars)
++        saver.restore(self.sess, restore_vars)                              # 加载模型
+ 
+         # init the remaining vars, especially those created by optimizer
+-        uninit_vars = set(tf.global_variables())
+-        uninit_vars -= set(self.model.trainable_vars)
+-        self.sess.run(tf.variables_initializer(uninit_vars))
++        uninit_vars = set(tf.global_variables())                            # 获取全部参数集合
++        uninit_vars -= set(self.model.trainable_vars)                       # 从集合中去除被训练过的参数, 留下未被训练的参数
++        self.sess.run(tf.variables_initializer(uninit_vars))                # 初始化这些参数
+ 
+     def sample_action(self, state):
+         norm_state = normalize(state)
+ 
+-        one_hot_action = one_hot(self.prev_action, self.action_cnt)
++        one_hot_action = one_hot(self.prev_action, self.action_cnt)         # 生成 one-hot 向量, 这里有可质疑的问题, state 里面是有last action的, 和 one-hot 重复了
+         aug_state = norm_state + one_hot_action
+ 
+         # Get probability of each action from the local network.
+diff --git a/dagger/train.py b/dagger/train.py
+index 4b3ed33..59634aa 100755
+--- a/dagger/train.py
++++ b/dagger/train.py
+@@ -25,37 +25,41 @@ from os import path
+ from subprocess import Popen, call
+ from helpers.helpers import get_open_udp_port
+ 
++'''用于训练
++启动新的子进程, 通过 ssh 连接其他 Server, 调用 dagger/worker.py
++ 
++'''
+ 
+ def run(args):
+     # run worker.py on ps and worker hosts
+     for job_name in ['ps', 'worker']:
+         host_list = args[job_name + '_list']
+-        procs = args[job_name + '_procs']
++        procs = args[job_name + '_procs']                       # 组装 ps_procs 和 worker_procs
+ 
+-        for i in xrange(len(host_list)):
+-            ssh_cmd = ['ssh', host_list[i]]
++        for i in range(len(host_list)):                         # 依次运行, 在这些 host 上运行
++            ssh_cmd = ['ssh', host_list[i]]                     # 组装 ssh 命令
+ 
+             cmd = ['python', args['worker_src'],
+                    '--ps-hosts', args['ps_hosts'],
+                    '--worker-hosts', args['worker_hosts'],
+                    '--job-name', job_name,
+-                   '--task-index', str(i)]
++                   '--task-index', str(i)]                      # 依次启动这些host
+ 
+             cmd = ssh_cmd + cmd
+ 
+             sys.stderr.write('$ %s\n' % ' '.join(cmd))
+-            procs.append(Popen(cmd, preexec_fn=os.setsid))
++            procs.append(Popen(cmd, preexec_fn=os.setsid))      # 记录管道
+ 
+     # ps will block forever
+-    for ps_proc in args['ps_procs']:
+-        ps_proc.communicate()
++    for ps_proc in args['ps_procs']:                            # 等待子进程结束再返回
++        ps_proc.communicate()                                   # timeout=None, 表示没有超时限制, communicate()方法将一直等待子进程完成
+ 
+ 
+ def cleanup(args):
+     all_procs = args['ps_procs'] + args['worker_procs']
+     for proc in all_procs:
+         try:
+-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
++            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)     # 杀死子进程
+         except OSError as e:
+             sys.stderr.write('%s\n' % e)
+ 
+@@ -65,7 +69,7 @@ def cleanup(args):
+     for host in host_set:
+         kill_cmd = ['ssh', host, 'python', pkill_script, args['rlcc_dir']]
+         sys.stderr.write('$ %s\n' % ' '.join(kill_cmd))
+-        call(kill_cmd)
++        call(kill_cmd)                                          # 执行时会阻塞当前进程
+ 
+     sys.stderr.write('\nAll cleaned up.\n')
+ 
+@@ -112,12 +116,12 @@ def main():
+     parser.add_argument(
+         '--rlcc-dir', metavar='DIR', default='/home/ubuntu/RLCC',
+         help='absolute path to RLCC/ (default: /home/ubuntu/RLCC)')
+-    prog_args = parser.parse_args()
+-    args = construct_args(prog_args)
++    prog_args = parser.parse_args()                                         # 解析参数
++    args = construct_args(prog_args)                                        # 创建参数
+ 
+     # run worker.py on ps and worker hosts
+     try:
+-        run(args)
++        run(args)                                                           # 运行
+     except KeyboardInterrupt:
+         pass
+     finally:
+diff --git a/dagger/worker.py b/dagger/worker.py
+index 68c8cca..723a536 100755
+--- a/dagger/worker.py
++++ b/dagger/worker.py
+@@ -29,7 +29,7 @@ from env.sender import Sender
+ 
+ 
+ def prepare_traces(bandwidth):
+-    trace_dir = path.join(project_root.DIR, 'env')
++    trace_dir = path.join(project_root.DIR, 'env')          # 准备 trace
+ 
+     if type(bandwidth) == int:
+         trace_path = path.join(trace_dir, '%dmbps.trace' % bandwidth)
+@@ -53,11 +53,11 @@ def prepare_traces(bandwidth):
+     return uplink_trace, downlink_trace
+ 
+ 
+-def create_env(task_index):
++def create_env(task_index):                          # 根据 index 准备环境, 每个worker训练在不同的环境下训练
+     """ Creates and returns an Environment which contains a single
+     sender-receiver connection. The environment is run inside mahimahi
+     shells. The environment knows the best cwnd to pass to the expert policy.
+-    """
++    """                                                             # 环境包含一个 mahimahi 模拟器, env 直到最佳的 cwnd
+ 
+     best_cwnds_file = path.join(project_root.DIR, 'dagger', 'best_cwnds.yml')
+     best_cwnd_map = yaml.load(open(best_cwnds_file))
+@@ -107,13 +107,13 @@ def create_env(task_index):
+         mm_cmd = 'mm-delay %d mm-link %s %s' % (delay, uplink_trace, downlink_trace)
+         best_cwnd = best_cwnd_map[bandwidth][delay]
+ 
+-    env = Environment(mm_cmd)
++    env = Environment(mm_cmd)           # 生成环境
+     env.best_cwnd = best_cwnd
+ 
+     return env
+ 
+ 
+-def run(args):
++def run(args):                  # 参数是当前服务器的配置, 根据输入的信息, 在当前服务器上创建 worker/ps, 特别的需要为worker创建环境
+     """ For each worker/parameter server, starts the appropriate job
+     associated with the cluster and server.
+     """
+@@ -126,26 +126,26 @@ def run(args):
+     worker_hosts = args.worker_hosts.split(',')
+     num_workers = len(worker_hosts)
+ 
+-    cluster = tf.train.ClusterSpec({'ps': ps_hosts, 'worker': worker_hosts})
+-    server = tf.train.Server(cluster, job_name=job_name, task_index=task_index)
+-
+-    if job_name == 'ps':
++    cluster = tf.train.ClusterSpec({'ps': ps_hosts, 'worker': worker_hosts})        # 指定集群描述对象
++    server = tf.train.Server(cluster, job_name=job_name, task_index=task_index)     # 创建不同的服务 Server
++ 
++    if job_name == 'ps':        # 根据不同服务做不同的事情 ps:去更新保存参数 worker:指定设备去运行模型计算
+         # Sets up the queue, shared variables, and global classifier.
+-        worker_tasks = set([idx for idx in xrange(num_workers)])
+-        leader = DaggerLeader(cluster, server, worker_tasks)
++        worker_tasks = set([idx for idx in range(num_workers)])     # worker 编号
++        leader = DaggerLeader(cluster, server, worker_tasks)        # 生成一个 DaggerLeader 作为 ps
+         try:
+-            leader.run(debug=True)
++            leader.run(debug=True)                                  # 运行 ps
+         except KeyboardInterrupt:
+             pass
+         finally:
+             leader.cleanup()
+ 
+-    elif job_name == 'worker':
++    elif job_name == 'worker':                                      # 如果是 worker
+         # Sets up the env, shared variables (sync, classifier, queue, etc)
+-        env = create_env(task_index)
+-        learner = DaggerWorker(cluster, server, task_index, env)
++        env = create_env(task_index)                                # 创建环境, 只有 worker 需要产生训练样本, 因此需要创建环境
++        learner = DaggerWorker(cluster, server, task_index, env)    # 创建 DaggerWorker
+         try:
+-            learner.run(debug=True)
++            learner.run(debug=True)                                 # 运行 worker
+         except KeyboardInterrupt:
+             pass
+         finally:
+@@ -153,18 +153,18 @@ def run(args):
+ 
+ 
+ def main():
+-    parser = argparse.ArgumentParser()
++    parser = argparse.ArgumentParser()          # 解析参数
+     parser.add_argument(
+-        '--ps-hosts', required=True, metavar='[HOSTNAME:PORT, ...]',
++        '--ps-hosts', required=True, metavar='[HOSTNAME:PORT, ...]',                # 参数服务器主机列表 server
+         help='comma-separated list of hostname:port of parameter servers')
+-    parser.add_argument(
++    parser.add_argument(                                                            # workers 列表
+         '--worker-hosts', required=True, metavar='[HOSTNAME:PORT, ...]',
+         help='comma-separated list of hostname:port of workers')
+-    parser.add_argument('--job-name', choices=['ps', 'worker'],
++    parser.add_argument('--job-name', choices=['ps', 'worker'],                     # parameter server  or worker
+                         required=True, help='ps or worker')
+-    parser.add_argument('--task-index', metavar='N', type=int, required=True,
++    parser.add_argument('--task-index', metavar='N', type=int, required=True,       # 当前服务器在 task 中的索引值
+                         help='index of task')
+-    args = parser.parse_args()
++    args = parser.parse_args()                                                      # 解析参数
+ 
+     # run parameter servers and workers
+     run(args)
+@@ -172,3 +172,18 @@ def main():
+ 
+ if __name__ == '__main__':
+     main()
++
++    ''' 采用 master/worker 分布式的训练策略, 
++        worker 首先从 parameter server 上获取参数,
++        worker 使用本地的训练数据生成参数梯度, 然后将梯度上传至 parameter server,
++        收集到所有 worker 发送的梯度后, 对梯度进行求和, 
++        最后使用梯度和更新 parameter server 的参数值.
++        
++        master/worker 分为同步更新和异步更新两种,
++        同步意味着全部 worker 完成计算并上传参数后一同更新参数, 再分发给 worker,
++        异步意味着 worker 的梯度直接用于更新 parameter server 的参数, 更新后直接返回给对应的 worker,
++        同步意味着额外的对齐时间的开销, 异步虽然运行更快但不稳定.
++        
++        显然, master 是该模型的瓶颈, 为了降低 master 通信的压力, 将参数分散在不同的 parameter server 上,
++        每个  master 仅维护部分参数.
++    '''
+\ No newline at end of file
+diff --git a/env/environment.py b/env/environment.py
+index 4b28b66..7f3f1d9 100644
+--- a/env/environment.py
++++ b/env/environment.py
+@@ -25,9 +25,9 @@ from helpers.helpers import get_open_udp_port
+ 
+ class Environment(object):
+     def __init__(self, mahimahi_cmd):
+-        self.mahimahi_cmd = mahimahi_cmd
+-        self.state_dim = Sender.state_dim
+-        self.action_cnt = Sender.action_cnt
++        self.mahimahi_cmd = mahimahi_cmd            # 启动 mahimahi 的指令
++        self.state_dim = Sender.state_dim           # 状态维度是 4
++        self.action_cnt = Sender.action_cnt         # 动作维度是 5 ["/2.0", "-10.0", "+0.0", "+10.0", "*2.0"]
+ 
+         # variables below will be filled in during setup
+         self.sender = None
+@@ -36,46 +36,46 @@ class Environment(object):
+     def set_sample_action(self, sample_action):
+         """Set the sender's policy. Must be called before calling reset()."""
+ 
+-        self.sample_action = sample_action
++        self.sample_action = sample_action                          # 设置动作
+ 
+-    def reset(self):
++    def reset(self):                                        # 初始化, 建立连接并完成握手
+         """Must be called before running rollout()."""
+ 
+         self.cleanup()
+ 
+-        self.port = get_open_udp_port()
++        self.port = get_open_udp_port()                             # 获取 udp 端口号
+ 
+         # start sender as an instance of Sender class
+-        sys.stderr.write('Starting sender...\n')
+-        self.sender = Sender(self.port, train=True)
+-        self.sender.set_sample_action(self.sample_action)
++        sys.stderr.write('Starting sender...\n')                    # 启动发送端
++        self.sender = Sender(self.port, train=True)                 # 生成一个 Sender 类的实例
++        self.sender.set_sample_action(self.sample_action)           # 用env的动作去设置Sender的动作
+ 
+         # start receiver in a subprocess
+-        sys.stderr.write('Starting receiver...\n')
++        sys.stderr.write('Starting receiver...\n')                  # 启动接收端
+         receiver_src = path.join(
+-            project_root.DIR, 'env', 'run_receiver.py')
+-        recv_cmd = 'python %s $MAHIMAHI_BASE %s' % (receiver_src, self.port)
+-        cmd = "%s -- sh -c '%s'" % (self.mahimahi_cmd, recv_cmd)
+-        sys.stderr.write('$ %s\n' % cmd)
+-        self.receiver = Popen(cmd, preexec_fn=os.setsid, shell=True)
++            project_root.DIR, 'env', 'run_receiver.py')             # receiver程序地址: env/run.receiver.py
++        recv_cmd = 'python %s $MAHIMAHI_BASE %s' % (receiver_src, self.port)        # 运行 mahimahi 的指令 python env/run.receiver.py $MAHIMAHI_BASE port
++        cmd = "%s -- sh -c '%s'" % (self.mahimahi_cmd, recv_cmd)    # mahimahi + recv
++        sys.stderr.write('$ %s\n' % cmd)                            # 打印指令
++        self.receiver = Popen(cmd, preexec_fn=os.setsid, shell=True)        # 使用popen管道执行该指令
+ 
+         # sender completes the handshake sent from receiver
+-        self.sender.handshake()
++        self.sender.handshake()                                     # 握手
+ 
+-    def rollout(self):
++    def rollout(self):                                      # 在环境中运行一个 Sender, 完成一次与环境的交互
+         """Run sender in env, get final reward of an episode, reset sender."""
+ 
+         sys.stderr.write('Obtaining an episode from environment...\n')
+-        self.sender.run()
++        self.sender.run()                                           # 运行 sender
+ 
+     def cleanup(self):
+         if self.sender:
+-            self.sender.cleanup()
++            self.sender.cleanup()                                   # 关闭 sender
+             self.sender = None
+ 
+         if self.receiver:
+             try:
+-                os.killpg(os.getpgid(self.receiver.pid), signal.SIGTERM)
++                os.killpg(os.getpgid(self.receiver.pid), signal.SIGTERM)    # 关闭 receiver 进程
+             except OSError as e:
+                 sys.stderr.write('%s\n' % e)
+             finally:
+diff --git a/env/receiver.py b/env/receiver.py
+index 0c59edf..e1a8a0b 100644
+--- a/env/receiver.py
++++ b/env/receiver.py
+@@ -17,6 +17,12 @@ import sys
+ import json
+ import socket
+ import select
++
++import os
++cur_path = os.path.dirname(os.path.abspath(__file__))
++if cur_path not in sys.path:
++    sys.path.append(cur_path)
++
+ import datagram_pb2
+ import project_root
+ from helpers.helpers import READ_FLAGS, ERR_FLAGS, READ_ERR_FLAGS, ALL_FLAGS
+@@ -24,35 +30,35 @@ from helpers.helpers import READ_FLAGS, ERR_FLAGS, READ_ERR_FLAGS, ALL_FLAGS
+ 
+ class Receiver(object):
+     def __init__(self, ip, port):
+-        self.peer_addr = (ip, port)
++        self.peer_addr = (ip, port)                                             # ip, port
+ 
+         # UDP socket and poller
+-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
++        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)            # 生成一个 socket
+         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+ 
+         self.poller = select.poll()
+-        self.poller.register(self.sock, ALL_FLAGS)
++        self.poller.register(self.sock, ALL_FLAGS)                              # 向 poll 注册, 监听这个 socket
+ 
+     def cleanup(self):
+         self.sock.close()
+ 
+-    def construct_ack_from_data(self, serialized_data):
++    def construct_ack_from_data(self, serialized_data):                 # 生成一个 ACK 确认 data
+         """Construct a serialized ACK that acks a serialized datagram."""
+ 
+-        data = datagram_pb2.Data()
+-        data.ParseFromString(serialized_data)
++        data = datagram_pb2.Data()                          # 生成 data 对象
++        data.ParseFromString(serialized_data)               # 解析系列化的数据
+ 
+-        ack = datagram_pb2.Ack()
+-        ack.seq_num = data.seq_num
++        ack = datagram_pb2.Ack()                            # 生成一个 ACK 对象
++        ack.seq_num = data.seq_num                          # 向 ACK 中封装信息
+         ack.send_ts = data.send_ts
+         ack.sent_bytes = data.sent_bytes
+         ack.delivered_time = data.delivered_time
+         ack.delivered = data.delivered
+         ack.ack_bytes = len(serialized_data)
+ 
+-        return ack.SerializeToString()
++        return ack.SerializeToString()                      # 将 ACK 序列化
+ 
+-    def handshake(self):
++    def handshake(self):            # 模拟三次握手
+         """Handshake with peer sender. Must be called before run()."""
+ 
+         self.sock.setblocking(0)  # non-blocking UDP socket
+@@ -63,21 +69,21 @@ class Receiver(object):
+         self.poller.modify(self.sock, READ_ERR_FLAGS)
+ 
+         while True:
+-            self.sock.sendto('Hello from receiver', self.peer_addr)
+-            events = self.poller.poll(TIMEOUT)
++            self.sock.sendto(b'Hello from receiver', self.peer_addr)        # 发送握手信息
++            events = self.poller.poll(TIMEOUT)                              # 阻塞, 等待 socket 接收到信息后返回 events
+ 
+-            if not events:  # timed out
+-                retry_times += 1
+-                if retry_times > 10:
++            if not events:  # timed out                                     # 没有事件发生
++                retry_times += 1                                            # 重传
++                if retry_times > 10:                                        # 超过 10 次
+                     sys.stderr.write(
+                         '[receiver] Handshake failed after 10 retries\n')
+-                    return
++                    return                                                  # 退出
+                 else:
+                     sys.stderr.write(
+-                        '[receiver] Handshake timed out and retrying...\n')
++                        '[receiver] Handshake timed out and retrying...\n') # 没超过 10 次重传
+                     continue
+ 
+-            for fd, flag in events:
++            for fd, flag in events:                                         # 遍历事件
+                 assert self.sock.fileno() == fd
+ 
+                 if flag & ERR_FLAGS:
+@@ -86,22 +92,22 @@ class Receiver(object):
+                 if flag & READ_FLAGS:
+                     msg, addr = self.sock.recvfrom(1600)
+ 
+-                    if addr == self.peer_addr:
+-                        if msg != 'Hello from sender':
++                    if addr == self.peer_addr:                              # 比对地址
++                        if msg != 'Hello from sender':                      # 接收到 hello 信息       
+                             # 'Hello from sender' was presumably lost
+                             # received subsequent data from peer sender
+-                            ack = self.construct_ack_from_data(msg)
++                            ack = self.construct_ack_from_data(msg)         # 生成一个 ACK
+                             if ack is not None:
+-                                self.sock.sendto(ack, self.peer_addr)
++                                self.sock.sendto(ack, self.peer_addr)       # 发送 ACK
+                         return
+ 
+     def run(self):
+         self.sock.setblocking(1)  # blocking UDP socket
+ 
+         while True:
+-            serialized_data, addr = self.sock.recvfrom(1600)
++            serialized_data, addr = self.sock.recvfrom(1600)                # 接受数据
+ 
+             if addr == self.peer_addr:
+-                ack = self.construct_ack_from_data(serialized_data)
++                ack = self.construct_ack_from_data(serialized_data)         # 创建 ACK
+                 if ack is not None:
+-                    self.sock.sendto(ack, self.peer_addr)
++                    self.sock.sendto(ack, self.peer_addr)                   # 发送 ACK
+diff --git a/env/run_receiver.py b/env/run_receiver.py
+index cfd6b83..944019c 100755
+--- a/env/run_receiver.py
++++ b/env/run_receiver.py
+@@ -16,7 +16,7 @@
+ 
+ 
+ import argparse
+-from receiver import Receiver
++from receiver2 import Receiver
+ 
+ 
+ def main():
+@@ -24,12 +24,14 @@ def main():
+     parser.add_argument('ip', metavar='IP')
+     parser.add_argument('port', type=int)
+     args = parser.parse_args()
+-
++    
++    import sys
++    sys.stderr.write("before init receiver, ip=%s:%s\n" % (args.ip, args.port))
+     receiver = Receiver(args.ip, args.port)
+ 
+     try:
+-        receiver.handshake()
+-        receiver.run()
++        receiver.handshake()            # 尝试握手
++        receiver.run()                  # 尝试获取数据, 然后生成 ACK 并发送
+     except KeyboardInterrupt:
+         pass
+     finally:
+diff --git a/env/sender.py b/env/sender.py
+index 08c98ca..44a08f8 100644
+--- a/env/sender.py
++++ b/env/sender.py
+@@ -18,7 +18,13 @@ import sys
+ import json
+ import socket
+ import select
++import os
+ from os import path
++
++cur_path = os.path.dirname(os.path.abspath(__file__))
++if cur_path not in sys.path:
++    sys.path.append(cur_path)
++
+ import numpy as np
+ import datagram_pb2
+ import project_root
+@@ -38,11 +44,11 @@ def format_actions(action_list):
+                   for idx, action in enumerate(action_list)}
+ 
+ 
+-class Sender(object):
++class Sender(object):               # Sender - 负责建立连接, 并统计信息调用 Indigo 算法
+     # RL exposed class/static variables
+     max_steps = 1000
+     state_dim = 4
+-    action_mapping = format_actions(["/2.0", "-10.0", "+0.0", "+10.0", "*2.0"])
++    action_mapping = format_actions(["/2.0", "-10.0", "+0.0", "+10.0", "*2.0"])         # 可选 action
+     action_cnt = len(action_mapping)
+ 
+     def __init__(self, port=0, train=False, debug=False):
+@@ -56,12 +62,12 @@ class Sender(object):
+         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+         self.sock.bind(('0.0.0.0', port))
+         sys.stderr.write('[sender] Listening on port %s\n' %
+-                         self.sock.getsockname()[1])
++                         self.sock.getsockname()[1])    # 发送端监听
+ 
+-        self.poller = select.poll()
+-        self.poller.register(self.sock, ALL_FLAGS)
++        self.poller = select.poll()                     # 用于 IO 复用, 一个进程可以监视多个描述符, 一旦某个描述符就绪[一般是读就绪或者写就绪], 能够通知程序进行相应的读写操作
++        self.poller.register(self.sock, ALL_FLAGS)      # 监听 sock
+ 
+-        self.dummy_payload = 'x' * 1400
++        self.dummy_payload = 'x' * 1400         # 发送的负载
+ 
+         if self.debug:
+             self.sampling_file = open(path.join(project_root.DIR, 'env', 'sampling_time'), 'w', 0)
+@@ -72,7 +78,7 @@ class Sender(object):
+         self.cwnd = 10.0
+         self.step_len_ms = 10
+ 
+-        # state variables for RLCC
++        # state variables for RLCC                  # 记录信息
+         self.delivered_time = 0
+         self.delivered = 0
+         self.sent_bytes = 0
+@@ -100,58 +106,59 @@ class Sender(object):
+         """Handshake with peer receiver. Must be called before run()."""
+ 
+         while True:
+-            msg, addr = self.sock.recvfrom(1600)
++            sys.stderr.write('[sender] Whait for handshake!')
++            msg, addr = self.sock.recvfrom(1600)                            # 获取receiver发送的握手信息
+ 
+-            if msg == 'Hello from receiver' and self.peer_addr is None:
++            if msg == b'Hello from receiver' and self.peer_addr is None:     # 如果得到了相应的信息, 即完成了握手
+                 self.peer_addr = addr
+-                self.sock.sendto('Hello from sender', self.peer_addr)
++                self.sock.sendto(b'Hello from sender', self.peer_addr)       # 发送握手信息
+                 sys.stderr.write('[sender] Handshake success! '
+                                  'Receiver\'s address is %s:%s\n' % addr)
+                 break
+ 
+-        self.sock.setblocking(0)  # non-blocking UDP socket
++        self.sock.setblocking(0)  # non-blocking UDP socket                 # 非阻塞是指立即返回, 而不会等待缓冲区是否可用
+ 
+     def set_sample_action(self, sample_action):
+         """Set the policy. Must be called before run()."""
+ 
+-        self.sample_action = sample_action
++        self.sample_action = sample_action                                  # 选择 action 的策略, 即回调函数
+ 
+-    def update_state(self, ack):
++    def update_state(self, ack):                                    # 更新状态, 也就是输入向量
+         """ Update the state variables listed in __init__() """
+-        self.next_ack = max(self.next_ack, ack.seq_num + 1)
+-        curr_time_ms = curr_ts_ms()
++        self.next_ack = max(self.next_ack, ack.seq_num + 1)                 # 计算下一个 ACK seq
++        curr_time_ms = curr_ts_ms()                                         # 当前时间(ms)
+ 
+         # Update RTT
+-        rtt = float(curr_time_ms - ack.send_ts)
+-        self.min_rtt = min(self.min_rtt, rtt)
++        rtt = float(curr_time_ms - ack.send_ts)                             # 计算 RTT
++        self.min_rtt = min(self.min_rtt, rtt)                               # 计算 minRTT
+ 
+-        if self.train:
+-            if self.ts_first is None:
++        if self.train:                                                      # 如果处于训练阶段
++            if self.ts_first is None:                                       # 记录第一个时间戳
+                 self.ts_first = curr_time_ms
+-            self.rtt_buf.append(rtt)
++            self.rtt_buf.append(rtt)                                        # 将 RTT 样本放入 rtt_buf 中
+ 
+-        delay = rtt - self.min_rtt
++        delay = rtt - self.min_rtt                                          # 计算排队延迟
+         if self.delay_ewma is None:
+             self.delay_ewma = delay
+         else:
+-            self.delay_ewma = 0.875 * self.delay_ewma + 0.125 * delay
++            self.delay_ewma = 0.875 * self.delay_ewma + 0.125 * delay       # 指数平滑排队延迟
+ 
+         # Update BBR's delivery rate
+-        self.delivered += ack.ack_bytes
++        self.delivered += ack.ack_bytes                                     # 计算 delivery rate
+         self.delivered_time = curr_time_ms
+         delivery_rate = (0.008 * (self.delivered - ack.delivered) /
+                          max(1, self.delivered_time - ack.delivered_time))
+ 
+         if self.delivery_rate_ewma is None:
+-            self.delivery_rate_ewma = delivery_rate
++            self.delivery_rate_ewma = delivery_rate                         # 平滑 delivery rate
+         else:
+             self.delivery_rate_ewma = (
+                 0.875 * self.delivery_rate_ewma + 0.125 * delivery_rate)
+ 
+         # Update Vegas sending rate
+-        send_rate = 0.008 * (self.sent_bytes - ack.sent_bytes) / max(1, rtt)
++        send_rate = 0.008 * (self.sent_bytes - ack.sent_bytes) / max(1, rtt)        # 计算发送速率
+ 
+-        if self.send_rate_ewma is None:
++        if self.send_rate_ewma is None:                                     # 平滑发送速率
+             self.send_rate_ewma = send_rate
+         else:
+             self.send_rate_ewma = (
+@@ -159,62 +166,62 @@ class Sender(object):
+ 
+     def take_action(self, action_idx):
+         old_cwnd = self.cwnd
+-        op, val = self.action_mapping[action_idx]
++        op, val = self.action_mapping[action_idx]                           # 选择 action
+ 
+-        self.cwnd = apply_op(op, self.cwnd, val)
+-        self.cwnd = max(2.0, self.cwnd)
++        self.cwnd = apply_op(op, self.cwnd, val)                            # 执行选中的操作
++        self.cwnd = max(2.0, self.cwnd)                                     # 最小为 2.0
+ 
+     def window_is_open(self):
+-        return self.seq_num - self.next_ack < self.cwnd
++        return self.seq_num - self.next_ack < self.cwnd                     # 有足够的 cwnd 发送            
+ 
+     def send(self):
+-        data = datagram_pb2.Data()
+-        data.seq_num = self.seq_num
++        data = datagram_pb2.Data()                                          # 生成一个 Data 类
++        data.seq_num = self.seq_num                                         # 填写 data 信息
+         data.send_ts = curr_ts_ms()
+         data.sent_bytes = self.sent_bytes
+         data.delivered_time = self.delivered_time
+         data.delivered = self.delivered
+         data.payload = self.dummy_payload
+ 
+-        serialized_data = data.SerializeToString()
+-        self.sock.sendto(serialized_data, self.peer_addr)
++        serialized_data = data.SerializeToString()                          # 将 data packet 序列化
++        self.sock.sendto(serialized_data, self.peer_addr)                   # 发送 data packet
+ 
+-        self.seq_num += 1
+-        self.sent_bytes += len(serialized_data)
++        self.seq_num += 1                                                   # 更新 seq_num
++        self.sent_bytes += len(serialized_data)                             # 累积发送的字节数
+ 
+     def recv(self):
+-        serialized_ack, addr = self.sock.recvfrom(1600)
++        serialized_ack, addr = self.sock.recvfrom(1600)                     # 接收到报文
+ 
+         if addr != self.peer_addr:
+             return
+ 
+         ack = datagram_pb2.Ack()
+-        ack.ParseFromString(serialized_ack)
++        ack.ParseFromString(serialized_ack)                                 # 解析序列化的 ACK
+ 
+-        self.update_state(ack)
++        self.update_state(ack)                                              # 更新连接状态, 也就是网络输入
+ 
+         if self.step_start_ms is None:
+-            self.step_start_ms = curr_ts_ms()
++            self.step_start_ms = curr_ts_ms()                               # 启动定时器, 10ms
+ 
+         # At each step end, feed the state:
+-        if curr_ts_ms() - self.step_start_ms > self.step_len_ms:  # step's end
++        if curr_ts_ms() - self.step_start_ms > self.step_len_ms:  # step's end  10ms 调用一次 LSTM 网络
+             state = [self.delay_ewma,
+                      self.delivery_rate_ewma,
+                      self.send_rate_ewma,
+-                     self.cwnd]
++                     self.cwnd]                                             # 构建输入向量 x
+ 
+             # time how long it takes to get an action from the NN
+             if self.debug:
+                 start_sample = time.time()
+ 
+-            action = self.sample_action(state)
++            action = self.sample_action(state)                              # 选择合适的 action
+ 
+             if self.debug:
+                 self.sampling_file.write('%.2f ms\n' % ((time.time() - start_sample) * 1000))
+ 
+-            self.take_action(action)
++            self.take_action(action)                                        # 执行这个 action
+ 
+-            self.delay_ewma = None
++            self.delay_ewma = None                                          # 清空记录的数据
+             self.delivery_rate_ewma = None
+             self.send_rate_ewma = None
+ 
+@@ -231,23 +238,23 @@ class Sender(object):
+     def run(self):
+         TIMEOUT = 1000  # ms
+ 
+-        self.poller.modify(self.sock, ALL_FLAGS)
++        self.poller.modify(self.sock, ALL_FLAGS)        # 设置 flag 为 READ_FLAGS | WRITE_FLAGS | ERR_FLAGS
+         curr_flags = ALL_FLAGS
+ 
+         while self.running:
+-            if self.window_is_open():
++            if self.window_is_open():                   # 有空间发送
+                 if curr_flags != ALL_FLAGS:
+                     self.poller.modify(self.sock, ALL_FLAGS)
+                     curr_flags = ALL_FLAGS
+-            else:
+-                if curr_flags != READ_ERR_FLAGS:
++            else:                                       # 无空间发送
++                if curr_flags != READ_ERR_FLAGS:        # 修改关注的位
+                     self.poller.modify(self.sock, READ_ERR_FLAGS)
+                     curr_flags = READ_ERR_FLAGS
+ 
+-            events = self.poller.poll(TIMEOUT)
++            events = self.poller.poll(TIMEOUT)          # 阻塞 1s, 1s 后超时 [0 - 不阻塞, 不释放资源直到有IO事件, -1 - 阻塞, 等待有 IO 事件唤醒, 1 - 阻塞一段事件, 超时后无论有没有IO事件都会给一个返回值]
+ 
+             if not events:  # timed out
+-                self.send()
++                self.send()                             # 超时了, 没有时间发生, 发送
+ 
+             for fd, flag in events:
+                 assert self.sock.fileno() == fd
+@@ -256,10 +263,10 @@ class Sender(object):
+                     sys.exit('Error occurred to the channel')
+ 
+                 if flag & READ_FLAGS:
+-                    self.recv()
++                    self.recv()                         # 可读, 去读取信息
+ 
+                 if flag & WRITE_FLAGS:
+-                    if self.window_is_open():
++                    if self.window_is_open():           # 可写, 发送报文
+                         self.send()
+ 
+     def compute_performance(self):
+@@ -268,4 +275,4 @@ class Sender(object):
+         perc_delay = np.percentile(self.rtt_buf, 95)
+ 
+         with open(path.join(project_root.DIR, 'env', 'perf'), 'a', 0) as perf:
+-            perf.write('%.2f %d\n' % (tput, perc_delay))
++            perf.write('%.2f %d\n' % (tput, perc_delay))        # 记录吞吐/延迟
+diff --git a/helpers/helpers.py b/helpers/helpers.py
+index 976e217..e8c3ada 100644
+--- a/helpers/helpers.py
++++ b/helpers/helpers.py
+@@ -22,9 +22,9 @@ import numpy as np
+ import operator
+ 
+ 
+-READ_FLAGS = select.POLLIN | select.POLLPRI
+-WRITE_FLAGS = select.POLLOUT
+-ERR_FLAGS = select.POLLERR | select.POLLHUP | select.POLLNVAL
++READ_FLAGS = select.POLLIN | select.POLLPRI                     # 表示可读 (POLLIN | POLLPRI) = (有要读取的数据 | 有紧急数据需要读取)
++WRITE_FLAGS = select.POLLOUT                                    # 准备输出：写不会阻塞
++ERR_FLAGS = select.POLLERR | select.POLLHUP | select.POLLNVAL   # 某种错误条件 | 挂起 | 无效的请求：描述符未打开
+ READ_ERR_FLAGS = READ_FLAGS | ERR_FLAGS
+ ALL_FLAGS = READ_FLAGS | WRITE_FLAGS | ERR_FLAGS
+ 
+@@ -32,12 +32,12 @@ math_ops = {
+     '+': operator.add,
+     '-': operator.sub,
+     '*': operator.mul,
+-    '/': operator.div,
++    '/': operator.floordiv,                             # 除法似乎是 floordiv 更合理
+ }
+ 
+ 
+ def apply_op(op, op1, op2):
+-    return math_ops[op](op1, op2)
++    return math_ops[op](op1, op2)                       # 执行操作 (操作符, 操作数1, 操作数2)
+ 
+ 
+ def curr_ts_ms():
+@@ -57,7 +57,7 @@ def make_sure_path_exists(path):
+ 
+ def get_open_udp_port():
+     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)     
+ 
+     s.bind(('', 0))
+     port = s.getsockname()[1]
+diff --git a/helpers/my_gce_helper.py b/helpers/my_gce_helper.py
+index e24114d..6a7e925 100755
+--- a/helpers/my_gce_helper.py
++++ b/helpers/my_gce_helper.py
+@@ -40,7 +40,7 @@ def main():
+     ret_ext_ip_list = ''
+ 
+     worker_port = 16000
+-    for i in xrange(0, len(ip_list), 2):
++    for i in range(0, len(ip_list), 2):
+         internal_ip = ip_list[i]
+         external_ip = ip_list[i + 1]
+ 
+@@ -53,9 +53,9 @@ def main():
+         ret_int_ip_list += '%s,' % internal_ip
+         ret_ext_ip_list += '%s,' % external_ip
+ 
+-    print ret_cmd[:-1]
+-    print ret_int_ip_list[:-1]
+-    print ret_ext_ip_list[:-1]
++    print(ret_cmd[:-1])
++    print(ret_int_ip_list[:-1])
++    print(ret_ext_ip_list[:-1])
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/helpers/pkill.py b/helpers/pkill.py
+index 9cabc41..2a5a4d1 100755
+--- a/helpers/pkill.py
++++ b/helpers/pkill.py
+@@ -28,7 +28,7 @@ signal.signal(signal.SIGINT, signal_handler)
+ 
+ 
+ # kill mahimahi shells
+-pkill_cmds = ['pkill -f mm-delay', 'pkill -f mm-link']
++pkill_cmds = ['pkill -f mm-delay', 'pkill -f mm-link']          # 关闭 mahimahi
+ # kill all scripts in the directory specified by the first argument
+ if len(sys.argv) == 2:
+     pkill_cmds.append('pkill -f %s' % sys.argv[1])

@@ -1,0 +1,241 @@
+diff --git a/.vscode/launch.json b/.vscode/launch.json
+index 15e87de..492db16 100755
+--- a/.vscode/launch.json
++++ b/.vscode/launch.json
+@@ -10,17 +10,16 @@
+                 "local",
+                 "--schemes",
+                 "bbr",
+-                // "cubic",
+-                // "--uplink-trace",
+-                // "100mbps.trace",
+-                // "--append-mm-cmds",
+-                // "mm-delay 20"
++                "--uplink-trace",
++                "src/experiments/100mbps.trace",
++                "--append-mm-cmds",
++                "mm-delay 20"
+             ],
+             "console": "integratedTerminal",            // 默认值, 新建一个终端
+         },
+ 
+         {
+-            "name": "Python: tunnel_manager.py.py",
++            "name": "Python: tunnel_manager.py",
+             "type": "python",
+             "request": "launch",
+             "program": "${workspaceFolder}/src/experiments/tunnel_manager.py",
+@@ -46,7 +45,7 @@
+         },
+ 
+         {
+-            "name": "Python: test.py bbr cubic",
++            "name": "Python: test.py copa",
+             "type": "python",
+             "request": "launch",
+             "program": "${workspaceFolder}/src/experiments/test.py",
+@@ -57,5 +56,57 @@
+             ],
+             "console": "integratedTerminal",            // 默认值, 新建一个终端
+         },
++
++        {
++            "name": "Python: indigo.run_sernder.py",
++            "type": "python",
++            "request": "launch",
++            "program": "${workspaceFolder}/third_party/indigo/dagger/run_sender.py",
++            "args": [
++                "46705",
++            ],
++            "console": "integratedTerminal",            // 默认值, 新建一个终端
++        },
++
++
++        {
++            "name": "Python: test.py indigo",
++            "type": "python",
++            "request": "launch",
++            "program": "${workspaceFolder}/src/experiments/test.py",
++            "args": [
++                "local",
++                "--schemes",
++                "indigo",
++                "--uplink-trace",
++                "src/experiments/100mbps.trace",
++                "--append-mm-cmds",
++                "mm-delay 20"
++            ],
++            "console": "integratedTerminal",            // 默认值, 新建一个终端
++        },
++
++        {
++            "name": "Python: indigo.py sender",
++            "type": "python",
++            "request": "launch",
++            "program": "${workspaceFolder}/src/wrappers/indigo.py",
++            "args": [
++                "sender",
++                "8500"
++            ],
++            "console": "integratedTerminal",            // 默认值, 新建一个终端
++        },
++
++        {
++            "name": "Indigo: run_sender.py sender",
++            "type": "python",
++            "request": "launch",
++            "program": "${workspaceFolder}/third_party/indigo/dagger/run_sender.py",
++            "args": [
++                "8500"
++            ],
++            "console": "integratedTerminal",            // 默认值, 新建一个终端
++        },
+     ]
+ }
+\ No newline at end of file
+diff --git a/src/config.yml b/src/config.yml
+index 8a4d523..da041a7 100755
+--- a/src/config.yml
++++ b/src/config.yml
+@@ -71,7 +71,7 @@ schemes:
+     name: XNTP
+     color: blue
+     marker: 'D'
+-  MixedTest:
+-    name: mixed
+-    color: violet
+-    marker: o
+\ No newline at end of file
++  # MixedTest:
++  #   name: mixed
++  #   color: violet
++  #   marker: o
+\ No newline at end of file
+diff --git a/src/experiments/data/bbr_datalink_delay_run1.png b/src/experiments/data/bbr_datalink_delay_run1.png
+index a4a88f0..4bbb54c 100644
+Binary files a/src/experiments/data/bbr_datalink_delay_run1.png and b/src/experiments/data/bbr_datalink_delay_run1.png differ
+diff --git a/src/experiments/data/bbr_datalink_throughput_run1.png b/src/experiments/data/bbr_datalink_throughput_run1.png
+index 566a608..6991e58 100644
+Binary files a/src/experiments/data/bbr_datalink_throughput_run1.png and b/src/experiments/data/bbr_datalink_throughput_run1.png differ
+diff --git a/src/experiments/data/copa_datalink_delay_run1.png b/src/experiments/data/copa_datalink_delay_run1.png
+index 8f9071e..9041f37 100644
+Binary files a/src/experiments/data/copa_datalink_delay_run1.png and b/src/experiments/data/copa_datalink_delay_run1.png differ
+diff --git a/src/experiments/data/copa_datalink_throughput_run1.png b/src/experiments/data/copa_datalink_throughput_run1.png
+index 18d1b81..801946b 100644
+Binary files a/src/experiments/data/copa_datalink_throughput_run1.png and b/src/experiments/data/copa_datalink_throughput_run1.png differ
+diff --git a/src/experiments/data/cubic_datalink_delay_run1.png b/src/experiments/data/cubic_datalink_delay_run1.png
+index 42c542a..7a9ef2e 100644
+Binary files a/src/experiments/data/cubic_datalink_delay_run1.png and b/src/experiments/data/cubic_datalink_delay_run1.png differ
+diff --git a/src/experiments/data/cubic_datalink_throughput_run1.png b/src/experiments/data/cubic_datalink_throughput_run1.png
+index 8838ba5..33213e6 100644
+Binary files a/src/experiments/data/cubic_datalink_throughput_run1.png and b/src/experiments/data/cubic_datalink_throughput_run1.png differ
+diff --git a/src/experiments/data/delay_1_bbr.npy b/src/experiments/data/delay_1_bbr.npy
+index 6103f59..25122fe 100644
+Binary files a/src/experiments/data/delay_1_bbr.npy and b/src/experiments/data/delay_1_bbr.npy differ
+diff --git a/src/experiments/data/delay_1_copa.npy b/src/experiments/data/delay_1_copa.npy
+index ea0fcff..ee354d5 100644
+Binary files a/src/experiments/data/delay_1_copa.npy and b/src/experiments/data/delay_1_copa.npy differ
+diff --git a/src/experiments/data/delay_1_cubic.npy b/src/experiments/data/delay_1_cubic.npy
+index aa8f27f..23ccb07 100644
+Binary files a/src/experiments/data/delay_1_cubic.npy and b/src/experiments/data/delay_1_cubic.npy differ
+diff --git a/src/experiments/data/pantheon_metadata.json b/src/experiments/data/pantheon_metadata.json
+index b58ca30..59a042f 100644
+--- a/src/experiments/data/pantheon_metadata.json
++++ b/src/experiments/data/pantheon_metadata.json
+@@ -1,18 +1,17 @@
+ {
++    "append_mm_cmds": "mm-delay 20",
+     "cc_schemes": [
+-        "bbr",
+-        "copa",
+-        "cubic"
++        "indigo"
+     ],
+     "datapath": "",
+     "downlink_trace": "12mbps.trace",
+     "flows": 1,
+-    "git_summary": "branch: install @ 55251e87242891b634ab714bd80145541010d3ef\nthird_party/fillp @ d6da1459332fcee56963885d7eba17e6a32d4519\nthird_party/fillp-sheep @ 0e5bb722943babcd2b090d2c64fcd45e12e923f9\nthird_party/genericCC @ d0153f8e594aa89e93b032143cedbdfe58e562f4\n M automatic-tests.py\n M automatic-tests_vary-mahimahi-configs.py\n M makefile\n M markoviancc.cc\n M parsing_scripts/analyse_data.py\n M parsing_scripts/auto-plot.py\n M parsing_scripts/automatic-tests.py\n M parsing_scripts/parse_ctcp_output.py\n M parsing_scripts/parse_tcptrace.py\n M parsing_scripts/plot_vary_mahimahi_configs.py\n M rat.cc\n M rat.hh\n M whisker.hh\nthird_party/indigo @ 463d89b09699a57bfdfbae351646df6a60040b90\n M dagger/dagger.py\n M dagger/experts.py\n M dagger/models.py\n M dagger/project_root.py\n M dagger/run_sender.py\n M dagger/train.py\n M dagger/worker.py\n M env/environment.py\n M env/receiver.py\n M env/sender.py\n M helpers/helpers.py\n M helpers/my_gce_helper.py\n M helpers/pkill.py\nthird_party/libutp @ b3465b942e2826f2b179eaab4a906ce6bb7cf3cf\nthird_party/pantheon-tunnel @ f866d3f58d27afd942717625ee3a354cc2e802bd\nthird_party/pcc @ 1afc958fa0d66d18b623c091a55fec872b4981e1\n M receiver/src/buffer.h\n M receiver/src/core.cpp\n M sender/src/buffer.h\n M sender/src/core.cpp\nthird_party/pcc-experimental @ cd43e34e3f5f5613e8acd08fab92c4eb24f974ab\nthird_party/proto-quic @ 77961f1a82733a86b42f1bc8143ebc978f3cff42\nthird_party/scream-reproduce @ f099118d1421aa3131bf11ff1964974e1da3bdb2\nthird_party/sprout @ 366e35c6178b01e31d4a46ad18c74f9415f19a26\nthird_party/verus @ d4b447ea74c6c60a261149af2629562939f9a494\n M src/verus.hpp\n M tools/plot.py\nthird_party/vivace @ 2baf86211435ae071a32f96b7d8c504587f5d7f4\nthird_party/webrtc @ 3f0cc2a9061a41b6f9dde4735770d143a1fa2851\n",
++    "git_summary": "branch: install @ 3de34b4f98918eb0def1f57ea6880cc33d804074\nthird_party/fillp @ d6da1459332fcee56963885d7eba17e6a32d4519\nthird_party/fillp-sheep @ 0e5bb722943babcd2b090d2c64fcd45e12e923f9\nthird_party/genericCC @ d0153f8e594aa89e93b032143cedbdfe58e562f4\n M automatic-tests.py\n M automatic-tests_vary-mahimahi-configs.py\n M makefile\n M markoviancc.cc\n M parsing_scripts/analyse_data.py\n M parsing_scripts/auto-plot.py\n M parsing_scripts/automatic-tests.py\n M parsing_scripts/parse_ctcp_output.py\n M parsing_scripts/parse_tcptrace.py\n M parsing_scripts/plot_vary_mahimahi_configs.py\n M rat.cc\n M rat.hh\n M whisker.hh\nthird_party/indigo @ 463d89b09699a57bfdfbae351646df6a60040b90\n M dagger/dagger.py\n M dagger/experts.py\n M dagger/models.py\n M dagger/run_sender.py\n M dagger/train.py\n M dagger/worker.py\n M env/environment.py\n M env/receiver.py\n M env/run_receiver.py\n M env/sender.py\n M helpers/helpers.py\n M helpers/my_gce_helper.py\n M helpers/pkill.py\nthird_party/libutp @ b3465b942e2826f2b179eaab4a906ce6bb7cf3cf\nthird_party/pantheon-tunnel @ f866d3f58d27afd942717625ee3a354cc2e802bd\nthird_party/pcc @ 1afc958fa0d66d18b623c091a55fec872b4981e1\n M receiver/src/buffer.h\n M receiver/src/core.cpp\n M sender/src/buffer.h\n M sender/src/core.cpp\nthird_party/pcc-experimental @ cd43e34e3f5f5613e8acd08fab92c4eb24f974ab\nthird_party/proto-quic @ 77961f1a82733a86b42f1bc8143ebc978f3cff42\nthird_party/scream-reproduce @ f099118d1421aa3131bf11ff1964974e1da3bdb2\nthird_party/sprout @ 366e35c6178b01e31d4a46ad18c74f9415f19a26\nthird_party/verus @ d4b447ea74c6c60a261149af2629562939f9a494\n M src/verus.hpp\n M tools/plot.py\nthird_party/vivace @ 2baf86211435ae071a32f96b7d8c504587f5d7f4\nthird_party/webrtc @ 3f0cc2a9061a41b6f9dde4735770d143a1fa2851\n",
+     "interval": 0,
+     "mode": "local",
+     "random_order": false,
+     "run_times": 1,
+     "runtime": 30,
+     "start_run_id": 1,
+-    "uplink_trace": "12mbps.trace"
++    "uplink_trace": "100mbps.trace"
+ }
+\ No newline at end of file
+diff --git a/src/experiments/data/pantheon_perf.json b/src/experiments/data/pantheon_perf.json
+index 68b9069..faf6458 100644
+--- a/src/experiments/data/pantheon_perf.json
++++ b/src/experiments/data/pantheon_perf.json
+@@ -1 +1 @@
+-{"bbr": {"1": {"all": {"tput": 11.984018034279684, "delay": 16.123, "loss": 0.0003009618473118758}, "1": {"tput": 11.984018034279684, "delay": 16.123, "loss": 0.0003009618473118758}}}, "copa": {"1": {"all": {"tput": 11.969552675608755, "delay": 566.116, "loss": 0.01496413047170242}, "1": {"tput": 11.969552675608755, "delay": 566.116, "loss": 0.01496413047170242}}}, "cubic": {"1": {"all": {"tput": 11.999206340728714, "delay": 1713.581, "loss": 0.030582070324392974}, "1": {"tput": 11.999206340728714, "delay": 1713.581, "loss": 0.030582070324392974}}}}
+\ No newline at end of file
++{"indigo": {"1": {"all": {"tput": 10.183658824279703, "delay": 24.29, "loss": 0.0}, "1": {"tput": 10.183658824279703, "delay": 24.29, "loss": 0.0}}}}
+\ No newline at end of file
+diff --git a/src/experiments/data/throughput_1_bbr_egress.npy b/src/experiments/data/throughput_1_bbr_egress.npy
+index 9406047..6879ed2 100644
+Binary files a/src/experiments/data/throughput_1_bbr_egress.npy and b/src/experiments/data/throughput_1_bbr_egress.npy differ
+diff --git a/src/experiments/data/throughput_1_bbr_ingress.npy b/src/experiments/data/throughput_1_bbr_ingress.npy
+index f2323cd..ae642a3 100644
+Binary files a/src/experiments/data/throughput_1_bbr_ingress.npy and b/src/experiments/data/throughput_1_bbr_ingress.npy differ
+diff --git a/src/experiments/data/throughput_1_copa_egress.npy b/src/experiments/data/throughput_1_copa_egress.npy
+index 409664a..253b1bf 100644
+Binary files a/src/experiments/data/throughput_1_copa_egress.npy and b/src/experiments/data/throughput_1_copa_egress.npy differ
+diff --git a/src/experiments/data/throughput_1_copa_ingress.npy b/src/experiments/data/throughput_1_copa_ingress.npy
+index cb69af0..6dd192f 100644
+Binary files a/src/experiments/data/throughput_1_copa_ingress.npy and b/src/experiments/data/throughput_1_copa_ingress.npy differ
+diff --git a/src/experiments/data/throughput_1_cubic_egress.npy b/src/experiments/data/throughput_1_cubic_egress.npy
+index 5371380..27f8419 100644
+Binary files a/src/experiments/data/throughput_1_cubic_egress.npy and b/src/experiments/data/throughput_1_cubic_egress.npy differ
+diff --git a/src/experiments/data/throughput_1_cubic_ingress.npy b/src/experiments/data/throughput_1_cubic_ingress.npy
+index fd34305..f6670b5 100644
+Binary files a/src/experiments/data/throughput_1_cubic_ingress.npy and b/src/experiments/data/throughput_1_cubic_ingress.npy differ
+diff --git a/src/experiments/test.py b/src/experiments/test.py
+index 33f9990..7c5d1da 100755
+--- a/src/experiments/test.py
++++ b/src/experiments/test.py
+@@ -201,7 +201,7 @@ class Test(object):
+             self.run_second = None
+ 
+         # wait for 3 seconds until run_first is ready                                         
+-        self.run_first_setup_time = 3
++        self.run_first_setup_time = 20
+ 
+         # setup output logs
+         self.datalink_name = self.cc + '_datalink_run%d' % self.run_id              # 'bbr_datalink_run1'
+@@ -456,19 +456,19 @@ class Test(object):
+ 
+             recv_manager.stdin.write(first_cmd.encode('utf-8'))     # 将指令发送给 recv tunnel manage, 该指令被发送给 mm-tunnelserver, 调用 src/wrappers/bbr.py
+             recv_manager.stdin.flush()                              # 每个算法都提供了启动流的方式, bbr 启动了 iperf server
+-        elif self.run_first == 'sender':  # self.run_first == 'sender'
++        elif self.run_first == 'sender':                            # 接收端先运行
+             if self.mode == 'remote':
+                 if self.sender_side == 'local':
+                     second_src = self.r['cc_src']
+                 else:
+                     first_src = self.r['cc_src']
+ 
+-            port = utils.get_open_port()
++            port = utils.get_open_port()                            # 获取一个 port
+ 
+             first_cmd = 'tunnel %s python %s sender %s\n' % (
+-                tun_id, first_src, port)
++                tun_id, first_src, port)                            # sender 命令
+             second_cmd = 'tunnel %s python %s receiver %s %s\n' % (
+-                tun_id, second_src, send_pri_ip, port)
++                tun_id, second_src, send_pri_ip, port)              # receiver 命令
+ 
+             send_manager.stdin.write(first_cmd.encode('utf-8'))
+             send_manager.stdin.flush()
+@@ -518,7 +518,7 @@ class Test(object):
+ 
+     def run_second_side(self, send_manager, recv_manager, second_cmds):
+         time.sleep(self.run_first_setup_time)
+-        self.run_first = 'receiver'                     # run_first: receiver
++        # self.run_first = 'receiver'                     # run_first: receiver         ??? error: 不应该修改 run_first
+         start_time = time.time()                        # 当前时间
+         self.test_start_time = utils.utc_time()         # 获取 utc 时间
+ 
